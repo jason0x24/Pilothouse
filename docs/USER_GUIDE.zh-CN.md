@@ -554,4 +554,4 @@ UPDATE plugins SET enabled = false WHERE name = 'broken_plugin';
 
 - **写插件** → [PLUGIN_AUTHORING.zh-CN.md](./PLUGIN_AUTHORING.zh-CN.md)
 - **示例插件** → [`examples/plugins/`](../examples/plugins/)
-- **项目主 README** → [`../README.zh-CN.md`](../README.zh-CN.md)
+- **项目主 README** → [`../README.md`](../README.md)(简体中文) · [`../README.en.md`](../README.en.md)(English)

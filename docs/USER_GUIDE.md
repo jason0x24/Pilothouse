@@ -579,4 +579,4 @@ Or remove the file from `PILOTHOUSE_PLUGIN_DIR` if it's directory-discovered.
 
 - **Writing a plugin** → [PLUGIN_AUTHORING.md](./PLUGIN_AUTHORING.md)
 - **Example plugins** → [`examples/plugins/`](../examples/plugins/)
-- **Bilingual project README** → [`../README.md`](../README.md)
+- **Bilingual project README** → [`../README.en.md`](../README.en.md) (English) · [`../README.md`](../README.md) (简体中文)

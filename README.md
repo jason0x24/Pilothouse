@@ -1,157 +1,154 @@
 # Pilothouse
 
-**English** · [简体中文](./README.zh-CN.md)
+[English](./README.en.md) · **简体中文**
 
-> AI DevOps Copilot platform — configure an agent once, let it run on
-> triggers across CI/CD, monitoring and IaC.
+> **声明** —— 本项目**仅供学习与参考之用**,**不提供任何形式的技术支持**,
+> 也不对正确性、安全性或生产可用性作任何保证。使用风险自担。
 
-Pilothouse is a multi-tenant, production-grade platform for shipping
-LLM-powered automations into a DevOps stack. Operators register
-**agents** (a name + a template + params + a trigger). From then on,
-those agents fire automatically — on cron, on webhook, or via API — to
-investigate alerts, review PRs, diagnose pod failures, run a Terraform
-plan review, and post their findings back. Every destructive action is
-gated by either a dry-run preview or an explicit human approval; every
-LLM step is captured in an append-only audit log.
+> AI DevOps Copilot 平台 —— 配置一次 Agent,让它在 CI/CD、监控、IaC
+> 等场景下按触发器自动运行。
+
+Pilothouse 是一个**多租户、生产级**的平台,用来把 LLM 驱动的自动化
+嵌进 DevOps 工作流。运维同学注册若干 **Agent**(name + template +
+params + trigger),从此这些 Agent 会在 cron / webhook / API 触发时
+自动跑起来 —— 调查告警、审查 PR、诊断 pod 故障、跑 Terraform plan
+review,然后把结论回写回去。每一个破坏性操作要么走 dry-run 预览,
+要么走显式人工审批;每一步 LLM 调用都进入 append-only 审计日志。
 
 ```
 [ webhooks ]                                         ┌──────────────┐
-[ cron     ] ──► FastAPI server ──► AgentRunner ──► │ Tool registry │
+[ cron     ] ──► FastAPI server ──► AgentRunner ──► │ 工具注册表    │
 [ CLI / UI ]      (multi-tenant)    (tool-use loop) │ • Datadog     │
                                           │         │ • GitHub      │
                                           ▼         │ • PagerDuty   │
                               SQLite / Postgres     │ • Slack       │
                               agents · runs ·       │ • Kubernetes  │
-                              events · approvals ·  │ • MCP (any)   │
+                              events · approvals ·  │ • MCP (任意)  │
                               tenants · mcp_servers └──────────────┘
                                           │
-                              SSE • Prometheus • Slack/webhook notify
-                              JSON/CSV audit export • cost dashboard
+                              SSE • Prometheus • Slack/webhook 通知
+                              JSON/CSV 审计导出 • cost 仪表盘
 ```
 
 ---
 
-## Quick start
+## 快速开始
 
 ```bash
-# Option A — local Python via uv (recommended; manages Python + deps + lock)
-curl -LsSf https://astral.sh/uv/install.sh | sh    # one-time
-uv sync --all-extras                               # reads .python-version (3.12) + pyproject
+# 方式 A —— 本地 Python + uv(推荐;管 Python 版本 + 依赖 + lock)
+curl -LsSf https://astral.sh/uv/install.sh | sh    # 装一次
+uv sync --all-extras                               # 读 .python-version(3.12)和 pyproject
 uv run pilothouse db init
-uv run pilothouse demo                             # one-of-each agent + mock run
+uv run pilothouse demo                             # 一键创建每种 Agent + 跑一次 mock
 uv run pilothouse serve                            # http://127.0.0.1:8088
 cd console && npm install && npm run dev           # http://localhost:3000
 
-# Option B — local Python via pip (traditional)
+# 方式 B —— 本地 Python + pip(传统)
 python3.12 -m venv .venv && source .venv/bin/activate
 pip install -e '.[dev,temporal]'
 pilothouse db init && pilothouse demo
 
-# Option C — full stack via Docker (api + console + Postgres)
+# 方式 C —— Docker 全栈(api + console + Postgres)
 docker compose up
 # api      http://localhost:8088
 # console  http://localhost:3000
 ```
 
-`pilothouse demo` creates one agent per template and triggers each in
-mock mode, printing the full audit trail. **No API keys required**.
-`uv.lock` is committed so every contributor and CI run gets the same
-dependency tree.
+`pilothouse demo` 会创建每个模板对应的 Agent,然后在 mock 模式下各
+触发一次,打印完整审计轨迹。**不需要任何 API key**。`uv.lock` 已经
+提交进 git,所有贡献者和 CI 看到的依赖树**完全一致**。
 
-### Documentation
+### 文档
 
-| Audience | Doc |
+| 适合谁 | 文档 |
 |---|---|
-| **Operators** running Pilothouse | [User Guide](./docs/USER_GUIDE.md) — install, configure, trigger, approve, deploy |
-| **Plugin authors** extending Pilothouse | [Plugin Authoring Guide](./docs/PLUGIN_AUTHORING.md) — 5 kinds, scaffolding, testing, distribution |
-| **Quick CLI reference** | `pilothouse --help`, `pilothouse <subcommand> --help` |
-| **HTTP API reference** | OpenAPI at `/docs` once `pilothouse serve` is running |
+| **运维方** —— 跑 Pilothouse | [使用指南](./docs/USER_GUIDE.zh-CN.md) —— 安装、配置、触发、审批、部署 |
+| **插件作者** —— 扩展 Pilothouse | [插件作者指南](./docs/PLUGIN_AUTHORING.zh-CN.md) —— 5 种类型、scaffold、测试、分发 |
+| **CLI 速查** | `pilothouse --help`、`pilothouse <subcommand> --help` |
+| **HTTP API 参考** | `pilothouse serve` 后访问 `/docs` 看自动生成的 OpenAPI |
 
 ---
 
-## Implemented features
+## 已实现功能
 
-### 1. Plugin system
+### 1. 插件系统
 
-The whole platform is plugin-based. Every template, connector,
-notifier, trigger, and lifecycle hook — including the ones shipped in
-the wheel — is registered through a single `PluginManager`. Operators
-toggle them at runtime with no code changes:
+整个平台都是插件化的。所有模板、connector、通知器、触发器和生命周期
+钩子 —— 包括内置的那些 —— 都通过同一个 `PluginManager` 注册。运维
+不改代码就能在运行时切换:
 
 | | |
 |---|---|
-| **Five plugin kinds** | `TemplatePlugin` (new agent templates) · `ConnectorPlugin` (external service tools) · `NotifierPlugin` (event-bus subscribers) · `TriggerPlugin` (new ways to fire agents) · `HookPlugin` (`before_run` / `after_run` lifecycle) — a plugin can mix kinds via multiple inheritance. |
-| **Three discovery paths** | **In-tree built-ins** (the 8 templates + 6 connectors that ship with the wheel) · **Entry points** (`[project.entry-points."pilothouse.plugins"]` in any pip-installed package) · **Directory scan** (`PILOTHOUSE_PLUGIN_DIR` or `./plugins/` for local dev). |
-| **Persisted enable/disable** | `pilothouse plugins disable builtin.template.flaky_test_hunter` flips a row in the `plugins` table. Disabled plugins stay disabled across restarts and are removed from the live registries. |
-| **Live re-discovery** | `pilothouse plugins reload` (or `POST /plugins/reload`) re-scans entry points + directory without a process restart — useful after dropping a new plugin file. |
-| **Declared config schema** | Plugins declare required / optional config fields (with `secret`, `default`, `env_fallback`); operators set values via CLI / HTTP / UI; the manager validates at activation and marks plugins **misconfigured** instead of crashing. `pilothouse plugins doctor` exits non-zero if anything is missing — perfect for CI pre-deploy checks. |
-| **Same API for built-ins and third parties** | Built-ins are just `BuiltinTemplatePlugin` / `BuiltinConnectorPlugin` adapters. An organisation can ship its private templates as a pip package and they get loaded the same way. |
-| **Console UI** | `/plugins` route — list, filter by kind / status, enable/disable, edit config inline (secrets masked). Banner at top flags misconfigured plugins. |
-| **Authoring guide + examples** | `examples/plugins/discord_notifier.py` (notifier with config schema) · `examples/plugins/poll_url_trigger.py` (trigger with start/stop lifecycle) · `examples/plugins/README.md`. |
+| **5 种插件类型** | `TemplatePlugin`(新 Agent 模板) · `ConnectorPlugin`(外部服务工具) · `NotifierPlugin`(事件总线订阅者) · `TriggerPlugin`(新触发源) · `HookPlugin`(`before_run` / `after_run` 生命周期切面) —— 一个插件可以多继承混合多种类型 |
+| **3 种发现路径** | **In-tree builtins**(wheel 自带的 8 模板 + 6 connector) · **Entry points**(任意 pip 包的 `[project.entry-points."pilothouse.plugins"]`) · **目录扫描**(`PILOTHOUSE_PLUGIN_DIR` 或 `./plugins/` 用于本地迭代) |
+| **持久化 enable/disable** | `pilothouse plugins disable builtin.template.flaky_test_hunter` 翻 `plugins` 表里的一行。重启后状态保留,关掉的插件从活跃 registry 里被摘掉 |
+| **热重新发现** | `pilothouse plugins reload`(或 `POST /plugins/reload`)不重启进程就能重新扫 entry points + 目录 —— 适合刚丢进新插件文件后 |
+| **声明式配置 schema** | 插件声明需要的 config 字段(支持 `secret` / `default` / `env_fallback`);运维通过 CLI / HTTP / UI 设置;manager 在激活时校验,缺必填项时把插件标记为 **misconfigured** 而不是直接崩。`pilothouse plugins doctor` 在有任何 misconfig 时退出码非零 —— CI 部署前可直接用作健康检查 |
+| **内置和第三方走同一套 API** | 内置都是 `BuiltinTemplatePlugin` / `BuiltinConnectorPlugin` 适配器。组织内部把私有模板打成 pip 包,加载方式完全一样 |
+| **控制台 UI** | `/plugins` 路由 —— 列表 / 按 kind / status 过滤 / enable / disable / 内联编辑配置(secret 自动 mask)。顶部横幅高亮 misconfigured 插件 |
+| **作者指南 + 示例** | `examples/plugins/discord_notifier.py`(带 config schema 的 notifier) · `examples/plugins/poll_url_trigger.py`(带 start/stop 生命周期的 trigger) · `examples/plugins/README.md` |
 
-CLI surface:
+CLI:
 
 ```bash
-pilothouse plugins list                              # discover + show all with status
-pilothouse plugins info <name> [--reveal]            # one-plugin detail (meta + schema + config)
-pilothouse plugins enable  / disable <name>          # round-trip persists
-pilothouse plugins reload                            # re-scan entry points + directory
-pilothouse plugins doctor                            # exit 1 if any plugin is misconfigured
-pilothouse plugins config show <name> [--reveal]    # masked by default
+pilothouse plugins list                              # 发现 + 显示所有插件状态
+pilothouse plugins info <name> [--reveal]            # 单插件详情(meta + schema + config)
+pilothouse plugins enable  / disable <name>          # 持久化 round-trip
+pilothouse plugins reload                            # 重新扫描 entry points + 目录
+pilothouse plugins doctor                            # 任何 misconfig 时退出码 1
+pilothouse plugins config show <name> [--reveal]    # 默认 mask
 pilothouse plugins config set   <name> <key> <value>
 pilothouse plugins config unset <name> <key>
-pilothouse plugins scaffold <kind> <name>            # generate starter plugin + tests + pytest.ini
-pilothouse plugins install <package>                 # pip install + reload (entry-point plugins)
+pilothouse plugins scaffold <kind> <name>            # 生成插件骨架 + 测试 + pytest.ini
+pilothouse plugins install <package>                 # pip install + 重新发现(entry-point 插件)
 ```
 
-HTTP surface (admin tenant only): `GET /plugins`,
-`POST /plugins/{name}/{enable,disable}`, `POST /plugins/reload`,
-`GET /plugins/doctor`, `GET/POST /plugins/{name}/config`.
+HTTP(仅 admin 租户):`GET /plugins` · `POST /plugins/{name}/{enable,disable}` · `POST /plugins/reload` · `GET /plugins/doctor` · `GET/POST /plugins/{name}/config`。
 
-**Authoring a plugin?** 30-second loop:
+**想写插件?** 30 秒上手:
 
 ```bash
-pilothouse plugins scaffold notifier my_discord     # writes plugin.py + test + pytest.ini
+pilothouse plugins scaffold notifier my_discord     # 生成 plugin.py + 测试 + pytest.ini
 PILOTHOUSE_PLUGIN_DIR=./plugins pilothouse plugins reload
-pilothouse plugins info my_discord                  # see required config
-pytest plugins/tests/                               # async tests work out of the box
+pilothouse plugins info my_discord                  # 看需要的 config
+pytest plugins/tests/                               # 异步测试开箱即用
 ```
 
-Full author guide: [`docs/PLUGIN_AUTHORING.md`](./docs/PLUGIN_AUTHORING.md).
-Testing helpers live in `pilothouse.testing`:
-`mock_tool_context`, `make_event`, `capture_events`, `temp_plugin_manager`.
+完整作者指南:[`docs/PLUGIN_AUTHORING.zh-CN.md`](./docs/PLUGIN_AUTHORING.zh-CN.md)。
+测试工具在 `pilothouse.testing`:
+`mock_tool_context` · `make_event` · `capture_events` · `temp_plugin_manager`。
 
-### 2. Agent runtime
+### 2. Agent 运行时
 
 | | |
 |---|---|
-| **Tool-use loop** | Anthropic's tool-use protocol; each turn is checkpointable so a run can be paused at an approval gate and resumed in a different process. |
-| **Mock mode** | When `PILOTHOUSE_ANTHROPIC_API_KEY` is empty the runtime walks each template's `mock_plan()` deterministically — entire stack runs offline for tests/demos. |
-| **Resumable state** | `Run.state_json` carries the serialised loop state (messages, pending tool calls, partial results). |
-| **Cooperative cancellation** | The loop checks `Run.status` between iterations; an external `cancel_run` cleanly exits with the audit trail intact. |
-| **Cost tracking** | Per-run `tokens_input` / `tokens_output` / `cost_usd_cents` surfaced in the dashboard and Prometheus metrics. |
+| **Tool-use 循环** | 基于 Anthropic 的 tool-use 协议;每轮都是检查点,审批门暂停后可在不同进程内继续 |
+| **Mock 模式** | 当 `PILOTHOUSE_ANTHROPIC_API_KEY` 为空时,运行时按模板的 `mock_plan()` 确定性回放 —— 整套栈可离线跑测试和演示 |
+| **可恢复状态** | `Run.state_json` 持久化循环状态(messages、待审批工具调用、已执行结果) |
+| **协作式取消** | 循环每次迭代检查 `Run.status`;外部 `cancel_run` 能干净退出并保留完整审计 |
+| **成本跟踪** | 每次 run 记录 `tokens_input` / `tokens_output` / `cost_usd_cents`,在 dashboard 和 Prometheus 都能看到 |
 
-### 3. Built-in templates
+### 3. 内置模板
 
-The product surface — eight shippable playbooks:
+产品交付面 —— 8 个开箱即用的剧本:
 
-| Template | Trigger | What it does |
+| 模板 | 触发方式 | 做什么 |
 |---|---|---|
-| `datadog_alert_triage` | Datadog webhook / PagerDuty | Pull alert + metric + recent deploys + logs → ranked triage report |
-| `pr_security_scanner` | GitHub PR webhook | Diff scan for secrets, dep bumps, IAM, migrations → REQUEST_CHANGES comment |
-| `k8s_pod_investigator` | Alertmanager | `describe pod` + events + previous-container logs → top 5 ranked causes |
-| `terraform_plan_reviewer` | GitHub PR webhook | Classify each change as BLOCKING / RISKY / SAFE → review comment |
-| `pagerduty_first_responder` | PagerDuty webhook | Gather incident context, post to Slack, add note. **Does not ack** — that's a human call |
-| `flaky_test_hunter` | Cron (nightly) | Scan recent CI for tests that pass→fail→pass → tracking-issue digest |
-| `bug_auto_fixer` | Cron / Linear webhook | Pick up a tagged Linear issue → read referenced file → branch + commit + PR using the conventional git workflow → comment back |
-| `pr_code_reviewer` | GitHub PR webhook | Multi-dimensional review (correctness / performance / readability / security / tests) → one structured GitHub review with **inline line-anchored comments** |
+| `datadog_alert_triage` | Datadog webhook / PagerDuty | 拉告警 + 指标 + 近期部署 + 日志 → 排序后的分诊报告 |
+| `pr_security_scanner` | GitHub PR webhook | diff 扫描:secrets / 依赖升级 / IAM / migration → REQUEST_CHANGES 评论 |
+| `k8s_pod_investigator` | Alertmanager | `describe pod` + events + 上一次容器日志 → 排名前 5 的可能原因 |
+| `terraform_plan_reviewer` | GitHub PR webhook | 把每条变更分类为 BLOCKING / RISKY / SAFE → review 评论 |
+| `pagerduty_first_responder` | PagerDuty webhook | 收集 incident 上下文,推到 Slack,写 incident note。**不 ack** —— 那是人的决定 |
+| `flaky_test_hunter` | Cron(夜间) | 扫近期 CI 找 pass→fail→pass 的飘忽测试 → tracking issue 摘要 |
+| `bug_auto_fixer` | Cron / Linear webhook | 拉一个带标签的 Linear 工单 → 读引用的源文件 → 按 git 约定建分支 + commit + PR → 在工单回评 |
+| `pr_code_reviewer` | GitHub PR webhook | 多维度评审(正确性 / 性能 / 可读性 / 安全 / 测试)→ 一条结构化 GitHub Review,带**按行锚定的 inline 评论** |
 
 ### 4. Connectors
 
-Real HTTP calls in **live** mode, deterministic synthetic responses in
-**mock** mode (so templates can be developed without credentials).
+**live** 模式发真实 HTTP,**mock** 模式返回确定性的合成响应(没凭证
+也能开发模板)。
 
-| Connector | Tools | Live mode env var |
+| Connector | 工具 | live 模式 env var |
 |---|---|---|
 | `datadog` | query_metric, get_alert, recent_deploys, search_logs | `_DATADOG_API_KEY` + `_APP_KEY` |
 | `github` | get_pr, get_pr_diff, get_pr_files, get_file_content, list_recent_commits, post_pr_comment ⚠, create_branch ⚠, create_or_update_file ⚠, create_pull_request ⚠, create_pr_review ⚠ | `_GITHUB_TOKEN` |
@@ -159,186 +156,177 @@ Real HTTP calls in **live** mode, deterministic synthetic responses in
 | `slack` | post_message ⚠ | `_SLACK_BOT_TOKEN` |
 | `kubernetes` | describe_pod, get_pod_events, get_pod_logs, list_pods | `_KUBE_API_URL` + `_TOKEN` |
 | `linear` | list_issues, get_issue, add_comment ⚠, update_status ⚠ | `_LINEAR_API_KEY` |
-| `mcp` | _any tools exposed by a registered MCP server_ | n/a |
+| `mcp` | _任意已注册 MCP server 暴露的工具_ | n/a |
 
-⚠ = destructive (subject to dry-run + approval gate).
+⚠ = 破坏性(走 dry-run + 审批门)
 
-### 5. MCP adapter
+### 5. MCP 适配器
 
-Register **any** Model Context Protocol server as a Pilothouse
-connector — its tools appear alongside the built-ins, with the same
-dry-run and approval gates.
+**任意** MCP(Model Context Protocol)server 都能注册成 Pilothouse
+connector —— 它的工具会和原生 connector 一起出现,享受相同的 dry-run
+和审批门。
 
 ```bash
-# stdio transport (uvx / npx-launched servers)
+# stdio transport(uvx / npx 启动的 server)
 pilothouse connectors add-mcp time uvx mcp-server-time
 
-# HTTP transport (hosted MCP servers)
+# HTTP transport(托管的 MCP server)
 pilothouse connectors add-mcp finance --http https://mcp.example/rpc \
     --header "Authorization=Bearer $TOKEN"
 
-# Mark specific tools as destructive (gated)
+# 标记特定工具为破坏性(纳入审批门)
 pilothouse connectors add-mcp ops mcp-ops \
     --destructive delete_user --destructive drop_table
 ```
 
-MCP server registrations are persisted in `mcp_servers` and re-attached
-on server startup. Tool destructive-flag is honoured automatically when
-the upstream's `inputSchema.x-destructive` is `true`.
+MCP server 注册信息持久化在 `mcp_servers` 表,服务启动时自动重新挂上。
+当上游工具的 `inputSchema.x-destructive` 为 `true` 时,destructive 标记
+会被自动识别。
 
-### 6. Triggers
+### 6. 触发器
 
-| Trigger | Setup |
+| 触发器 | 配置 |
 |---|---|
-| **Manual (CLI)** | `pilothouse agents trigger <id> --file payload.json` |
-| **Manual (HTTP)** | `POST /agents/{id}/trigger` with `{"payload": {...}}` |
-| **Cron** | Set `schedule_cron` on an agent; APScheduler fires it |
-| **Webhook (Datadog)** | `POST /webhooks/datadog/{agent_id}` — verified via `DD-Signature` |
-| **Webhook (GitHub)** | `POST /webhooks/github/{agent_id}` — verified via `X-Hub-Signature-256` |
-| **Webhook (PagerDuty)** | `POST /webhooks/pagerduty/{agent_id}` — verified via `X-PagerDuty-Signature` (multi-key for rotation) |
-| **Webhook (Slack)** | `POST /webhooks/slack/{agent_id}` — verified via Slack v0 + 5-min window |
-| **Webhook (Alertmanager)** | `POST /webhooks/alertmanager/{agent_id}` |
-| **Webhook (generic)** | `POST /webhooks/generic/{agent_id}` — generic HMAC-SHA256 |
+| **手动(CLI)** | `pilothouse agents trigger <id> --file payload.json` |
+| **手动(HTTP)** | `POST /agents/{id}/trigger` 带 `{"payload": {...}}` |
+| **Cron** | 在 Agent 上设 `schedule_cron`;APScheduler 触发 |
+| **Webhook(Datadog)** | `POST /webhooks/datadog/{agent_id}` —— `DD-Signature` 签名校验 |
+| **Webhook(GitHub)** | `POST /webhooks/github/{agent_id}` —— `X-Hub-Signature-256` 签名校验 |
+| **Webhook(PagerDuty)** | `POST /webhooks/pagerduty/{agent_id}` —— `X-PagerDuty-Signature` 多 key 支持(便于轮换) |
+| **Webhook(Slack)** | `POST /webhooks/slack/{agent_id}` —— Slack v0 签名 + 5 分钟时间窗 |
+| **Webhook(Alertmanager)** | `POST /webhooks/alertmanager/{agent_id}` |
+| **Webhook(generic)** | `POST /webhooks/generic/{agent_id}` —— 通用 HMAC-SHA256 |
 
-Each source has its own secret env var (`PILOTHOUSE_*_WEBHOOK_SECRET`)
-so keys can be rotated independently. Empty secret = verification
-disabled (dev default).
+每个 source 有独立的 secret env var(`PILOTHOUSE_*_WEBHOOK_SECRET`),
+方便单独轮换。secret 留空 = 该 source 跳过校验(开发友好的默认)。
 
-### 7. Safety gates
+### 7. 安全门
 
-Every destructive tool call passes through three layers:
+每个破坏性工具调用都过三层:
 
-1. **`dry_run`** — when on, destructive tools never execute; the
-   runtime returns a `would_have_called_with: {…}` preview instead.
-   Enforced at the runtime, even if a connector forgets.
-2. **Approval gate** — when `dry_run=false` and
-   `require_approval_for_writes=true` (default), the runtime pauses,
-   creates an `Approval` row carrying the proposed input + assistant
-   rationale, and exits. A separate `resume_run` re-enters with the
-   operator's decision injected.
-3. **Approval TTL** — pending approvals older than
-   `PILOTHOUSE_APPROVAL_TTL_MINUTES` (default 60) are auto-rejected
-   by a background sweeper and the run resumes with a structured
-   `expired` rejection result fed to the model. Nothing dangles forever.
+1. **`dry_run`** —— 开启时,破坏性工具不会真执行;运行时返回
+   `would_have_called_with: {…}` 预览。在 runtime 层强制,即使
+   connector 忘记自检也不会漏。
+2. **审批门** —— 当 `dry_run=false` 且 `require_approval_for_writes=true`
+   (默认)时,运行时暂停,创建 `Approval` 行(带工具输入和模型理由),
+   然后退出。`resume_run` 接受运维决定后重新进入循环。
+3. **审批 TTL** —— 待审批超过 `PILOTHOUSE_APPROVAL_TTL_MINUTES`
+  (默认 60)的会被后台 sweeper 自动 reject,run 用结构化的"过期"拒绝
+   结果给模型,继续走完。**永远不会有挂死的审批**。
 
-Approval routing:
+审批路由:
 
-- **Slack-native interactive approval** — `notify_slack_channel: "#sre"`
-  on the agent posts a block-kit message with Approve / Reject buttons.
-  Clicking POSTs back to `/webhooks/slack/interactivity` (verified) →
-  resolves the approval → updates the message in-place. No need to
-  leave Slack to ship a PR comment or runbook step.
-- **Generic webhook** — set `PILOTHOUSE_NOTIFY_WEBHOOK_URL` to fan
-  approvals into Opsgenie, Discord, your own router etc.
+- **Slack 原生交互式审批** —— 在 Agent 上设 `notify_slack_channel: "#sre"`
+  会推送一条带 Approve / Reject 按钮的 block-kit 消息。点击后 POST 到
+  `/webhooks/slack/interactivity`(签名校验)→ 解析审批 → 原地更新消息。
+  **不用离开 Slack** 就能批准 PR 评论或运维步骤。
+- **通用 webhook** —— 设 `PILOTHOUSE_NOTIFY_WEBHOOK_URL` 把审批扇出
+  到 Opsgenie、Discord、自建路由器等。
 
-Bulk operations:
+批量操作:
 
 ```bash
 pilothouse approvals approve-all --tool github_post_pr_comment --by alice
 pilothouse approvals reject-all --agent scanner-foo --reason "rotate first"
 ```
 
-Or `POST /approvals/resolve-batch` with an array of ids or filter spec.
+也可以 `POST /approvals/resolve-batch` 传 ids 数组或 filter。
 
-### 8. Run lifecycle
-
-| | |
-|---|---|
-| **Cancel** | `POST /runs/{id}/cancel` flips status; loop exits at the next iteration boundary. If paused at approval, all pending approvals are auto-rejected with the cancellation reason. |
-| **Retry** | `POST /runs/{id}/retry` replays the same trigger payload as a fresh run. |
-| **Search** | `GET /runs?status=&agent=&trigger=&q=&limit=&offset=` — tenant-wide cross-agent search with composable filters. |
-| **JSON export** | `GET /runs/{id}/export.json` — full audit bundle (run + agent snapshot + every event + every approval). Drop into a SOC2 ticket. |
-| **CSV export** | `GET /runs/{id}/export.csv` — event timeline flattened. |
-| **Live SSE** | `GET /runs/{id}/events/stream` — replays history then attaches to the in-process bus, `event: end` closes when terminal. |
-| **Pretty CLI** | `pilothouse runs logs <id>` — colored single-line-per-event timeline; `--kind tool_call --tail 20` to filter. |
-
-### 9. Multi-tenancy
-
-Single-tenant installs see no behaviour change — a `default` tenant is
-bootstrapped automatically and the legacy `PILOTHOUSE_API_KEYS` env var
-seeds its keys.
+### 8. Run 生命周期
 
 | | |
 |---|---|
-| **Isolation** | Every Agent / Run / Approval / MCP server carries `tenant_id`. Cross-tenant lookups return **404** (no information leak about existence). |
-| **Auth** | `Authorization: Bearer <key>` or `X-API-Key: <key>` resolves to a tenant via the auth middleware; `request.state.tenant_id` is then enforced on every per-resource query. |
-| **Same agent name across tenants** | Names are unique per-tenant via `(tenant_id, name)` constraint. |
-| **Quotas** | `max_agents` (excess → 403) and `max_runs_per_day` (excess → 429) per tenant via `pilothouse tenants set-quota`. |
-| **Rate limiting** | Sliding 60-second window per tenant via `PILOTHOUSE_RATE_LIMIT_PER_MINUTE`. |
-| **Trigger dedup** | Webhook retries (Datadog/GitHub retry on 5xx) coalesce inside `PILOTHOUSE_DEDUP_WINDOW_SECONDS` — same agent + same payload digest returns the existing run id rather than starting another. |
-| **Admin via CLI** | All tenant CRUD via `pilothouse tenants` — never via HTTP, so a compromised tenant key cannot escalate. |
-| **Cascade delete** | `pilothouse tenants delete <name>` cleans up all owned agents/runs/approvals/MCP servers; the `default` tenant is protected. |
-| **Masked key listing** | `pilothouse tenants show-keys <name>` shows `phk_xxxx…yyyy + length` — never plaintext after creation. |
+| **取消** | `POST /runs/{id}/cancel` 翻状态;循环在下次迭代边界退出。如果在审批门暂停,所有待审批会被自动 reject 并带上取消原因 |
+| **重跑** | `POST /runs/{id}/retry` 用同一 trigger payload 起一个新 run |
+| **搜索** | `GET /runs?status=&agent=&trigger=&q=&limit=&offset=` —— 跨 Agent 的租户级搜索 |
+| **JSON 导出** | `GET /runs/{id}/export.json` —— 完整审计包(run + agent 快照 + 全部 events + 全部 approvals)。可直接贴到 SOC2 工单 |
+| **CSV 导出** | `GET /runs/{id}/export.csv` —— 事件时间线扁平化 |
+| **实时 SSE** | `GET /runs/{id}/events/stream` —— 先回放历史,再挂到内部 bus 实时推,terminal 后发 `event: end` 关闭 |
+| **美化 CLI** | `pilothouse runs logs <id>` —— 着色、单行/事件;`--kind tool_call --tail 20` 过滤 |
+
+### 9. 多租户
+
+单租户安装零变化 —— 启动时自动创建 `default` 租户,旧的
+`PILOTHOUSE_API_KEYS` 环境变量自动并入它的 keys 列表。
+
+| | |
+|---|---|
+| **隔离** | 每个 Agent / Run / Approval / MCP server 都带 `tenant_id`。跨租户查询统一返回 **404**(不泄露资源是否存在) |
+| **鉴权** | `Authorization: Bearer <key>` 或 `X-API-Key: <key>` 通过中间件解析为租户;`request.state.tenant_id` 在每个 per-resource 查询里强制过滤 |
+| **同名 Agent 跨租户允许** | 名字只在租户内唯一,通过 `(tenant_id, name)` 约束实现 |
+| **配额** | 每租户的 `max_agents`(超 → 403)和 `max_runs_per_day`(超 → 429),通过 `pilothouse tenants set-quota` 设置 |
+| **速率限制** | 滑动 60 秒窗口,每租户独立,`PILOTHOUSE_RATE_LIMIT_PER_MINUTE` 控制 |
+| **触发去重** | webhook 重试(Datadog / GitHub 在 5xx 时会重试)在 `PILOTHOUSE_DEDUP_WINDOW_SECONDS` 窗口内合并 —— 同 Agent + 同 payload 摘要返回已有 run id,不会再起一个 |
+| **CLI 管理** | 所有租户 CRUD 都走 `pilothouse tenants` —— **不通过 HTTP** —— 这样泄露的租户 key 永远无法升权 |
+| **级联删除** | `pilothouse tenants delete <name>` 清理它名下所有 agents/runs/approvals/MCP server;`default` 租户被保护不能删 |
+| **掩码 key 列表** | `pilothouse tenants show-keys <name>` 显示 `phk_xxxx…yyyy + 长度` —— 创建后再也不会明文显示 |
 
 ```bash
 pilothouse tenants create acme --display-name "Acme Corp"
-pilothouse tenants add-key acme                  # auto-generates phk_… key
+pilothouse tenants add-key acme                  # 自动生成 phk_… key
 pilothouse tenants set-quota acme --max-agents 10 --max-runs-per-day 500
 ```
 
-### 10. Git workflow conventions (bug-fix → PR)
+### 10. Git 工作流约定(Bug → PR)
 
-`bug_auto_fixer` writes to your repo. To keep machine-authored history
-recognisable, all PRs follow a strict, configurable convention:
+`bug_auto_fixer` 会**写你的代码仓**。为了让机器人提的历史一眼能辨认,
+所有 PR 都按一套严格、可覆盖的约定走:
 
-| | Format | Example |
+| | 格式 | 例子 |
 |---|---|---|
-| **Branch** | `<prefix>/<type>/<TICKET-ID>-<slug>` | `pilothouse/fix/ENG-1234-npe-in-get-user-when-db-lookup-misses` |
-| **Commit subject** | Conventional Commits `<type>(<scope>): <subject>` (≤ 72 chars) | `fix(users): NPE in get_user when DB lookup misses` |
-| **Commit body** | optional plain-English context | "Adds an early return in `get_user` and a regression test." |
-| **Commit footer** | `Closes <TICKET-ID>` (+ optional `Signed-off-by`) | `Closes ENG-1234` |
-| **PR title** | same as commit subject | |
-| **PR body** | summary + files touched + tests note + `Closes <TICKET-ID>` + `🤖 Opened by Pilothouse` footer | |
+| **分支** | `<prefix>/<type>/<TICKET-ID>-<slug>` | `pilothouse/fix/ENG-1234-npe-in-get-user-when-db-lookup-misses` |
+| **Commit subject** | Conventional Commits `<type>(<scope>): <subject>`(≤72 字) | `fix(users): NPE in get_user when DB lookup misses` |
+| **Commit body** | 可选,中英文都行的上下文说明 | "Adds an early return in `get_user` and a regression test." |
+| **Commit footer** | `Closes <TICKET-ID>` (+ 可选 `Signed-off-by`) | `Closes ENG-1234` |
+| **PR title** | 等同 commit subject | |
+| **PR body** | 总结 + 改动文件 + 测试说明 + `Closes <TICKET-ID>` + `🤖 Opened by Pilothouse` 尾巴 | |
 
-The `<prefix>` segment makes bot branches visually distinct from human
-branches and lets repo admins write protection rules like:
+`<prefix>/` 让 bot 分支和人类分支视觉上分开,也方便仓库管理员写保护规则:
 
 ```yaml
-# .github/branch-protection.yml — illustrative
+# .github/branch-protection.yml(示意)
 rules:
   - pattern: "pilothouse/**"
     required_reviewers: ["@sre"]
     require_signed_commits: true
 ```
 
-Knobs (env or per-agent):
+可调节项(env 或 per-agent params):
 
-| Setting | Effect | Default |
+| 设置 | 作用 | 默认值 |
 |---|---|---|
-| `PILOTHOUSE_GIT_BRANCH_PREFIX` / agent param `branch_prefix` | first segment of every bot branch | `pilothouse` |
-| `PILOTHOUSE_GIT_COMMIT_SIGNOFF` | append `Signed-off-by:` trailer (DCO-friendly) | `false` |
-| `PILOTHOUSE_GIT_PR_DRAFT` / agent param `draft` | open PRs as drafts so humans must mark ready | `false` |
+| `PILOTHOUSE_GIT_BRANCH_PREFIX` / agent param `branch_prefix` | bot 分支的第一段 | `pilothouse` |
+| `PILOTHOUSE_GIT_COMMIT_SIGNOFF` | 在 commit 末尾加 `Signed-off-by:`(DCO 友好) | `false` |
+| `PILOTHOUSE_GIT_PR_DRAFT` / agent param `draft` | 以 draft 形式开 PR,要求人工标记 ready | `false` |
 
-The full pipeline (read ticket → read file → branch → commit → PR →
-comment back to ticket) is one `bug_auto_fixer` run. Every write step
-is **destructive** and gated:
+完整链路(读工单 → 读文件 → 建分支 → commit → 开 PR → 回评工单)是
+一次 `bug_auto_fixer` 运行。每个 write 步骤都是**破坏性**操作,走审批门:
 
 ```bash
-# Run in dry-run first (default) — see exactly what it WOULD do.
+# 先 dry-run(默认)—— 看它会做什么但不真的做
 pilothouse agents create bug-fixer bug_auto_fixer \
     --param repo='"acme/api"' --param label='"pilothouse-fix"'
 echo '{"issue":{"identifier":"ENG-1234"}}' \
     | pilothouse agents trigger bug-fixer
 
-# Flip to live + approval gates:
+# 切换到 live + 审批门
 pilothouse agents create bug-fixer-live bug_auto_fixer \
     --param repo='"acme/api"' --param notify_slack_channel='"#sre-approvals"' \
     --no-dry-run
-# → first destructive step (create_branch) pauses for approval; approving in
-#   Slack auto-resumes through commit + PR + ticket comment.
+# → 第一个破坏性操作(create_branch)会暂停等审批;
+#   在 Slack 点 Approve 后自动 resume,走完 commit + PR + 工单回评
 ```
 
-### 11. PR code review (inline)
+### 11. PR 代码评审(inline)
 
-`pr_code_reviewer` is wired to GitHub PR webhooks. It posts a single
-GitHub Review with:
+`pr_code_reviewer` 接 GitHub PR webhook。它会发**一条**结构化的
+GitHub Review,内含:
 
-- a top-level body summarising findings (verdict + counts per severity)
-- inline comments anchored to specific `(path, line)` so each finding
-  shows up next to the offending code in the PR diff view
-- one of `APPROVE` / `REQUEST_CHANGES` / `COMMENT` based on severity
+- 顶部 body:总评 + 按严重度分类的发现数
+- inline 评论:每条都锚定到 `(path, line)`,在 PR diff 视图里**贴着代码**显示
+- event:基于发现的严重度,选 `APPROVE` / `REQUEST_CHANGES` / `COMMENT`
 
-Dimensions are configurable per agent:
+评审维度可在 agent params 里勾选:
 
 ```bash
 pilothouse agents create reviewer pr_code_reviewer \
@@ -347,22 +335,22 @@ pilothouse agents create reviewer pr_code_reviewer \
     --param block_on_findings=true
 ```
 
-The webhook URL to register on the GitHub repo:
-`POST /webhooks/github/<agent_id>` — verified via `X-Hub-Signature-256`.
+在 GitHub 仓库设置里 webhook URL 填:
+`POST /webhooks/github/<agent_id>` —— 走 `X-Hub-Signature-256` 校验。
 
-### 12. GitOps (declarative agents)
+### 12. GitOps(声明式 Agent 管理)
 
-Define your fleet in `agents.yaml`, commit to git, drive from CI:
+把整个 Agent 集群定义在 `agents.yaml`,提交到 git,从 CI 驱动:
 
 ```yaml
 version: 1
 defaults:
   dry_run: true
-prune: false           # set true to delete agents missing from this file
+prune: false           # 设 true 会删除 manifest 之外的 Agent
 agents:
   - name: triage-checkout
     template: datadog_alert_triage
-    description: Investigate checkout latency alerts
+    description: 调查 checkout 延迟告警
     params:
       service: checkout
       slack_channel: "#sre-checkout"
@@ -376,127 +364,126 @@ agents:
 ```
 
 ```bash
-pilothouse plan  -f agents.yaml                  # tf-style + ~ - diff
-pilothouse apply -f agents.yaml --auto-approve   # CI-friendly
-pilothouse export -o agents.yaml                 # round-trip current state
+pilothouse plan  -f agents.yaml                  # tf 风格的 + ~ - diff
+pilothouse apply -f agents.yaml --auto-approve   # CI 友好
+pilothouse export -o agents.yaml                 # 把当前状态反向导出
 ```
 
-`POST /manifest/{plan,apply,export}` exposes the same workflow over HTTP.
+`POST /manifest/{plan,apply,export}` 在 HTTP 上暴露同样的工作流。
 
-### 13. Observability
+### 13. 可观测性
 
-| Surface | What it shows |
+| 维度 | 内容 |
 |---|---|
-| **Audit log** | Every model turn, tool call, tool result, approval req/resolve/expire, decision, error → append-only `events` row. Replay reconstructs the run. |
-| **Prometheus `/metrics`** | Counters: events by kind, tool invocations, approval decisions, run terminations. Gauges: agents, pending approvals, runs awaiting approval. |
-| **`/stats?days=N`** | Aggregated: runs / tokens / cost-USD by day + by agent + by status. Backs the Console dashboard. |
-| **SSE live tail** | `/runs/{id}/events/stream` for real-time UI updates without polling. |
-| **Failure notifications** | `notify_on_failure: "#sre"` on an agent → Slack ping when a run reaches `failed` or `cancelled`; the same generic webhook fires too. |
-| **Console dashboard** | Per-day cost bars, top-cost agents, run-status breakdown, `1d/7d/30d` window. |
+| **审计日志** | 每个 model turn / tool call / tool result / approval 请求/解决/过期 / decision / error 都进 append-only 的 `events` 表。回放可重建 run |
+| **Prometheus `/metrics`** | counter:按 kind 分组的 events、tool 调用、审批决定、run terminal 状态。gauge:agents 数、待审批数、暂停 run 数 |
+| **`/stats?days=N`** | 按天 / 按 Agent / 按 status 聚合的 runs / tokens / cost-USD。控制台 dashboard 后端 |
+| **SSE 实时推送** | `/runs/{id}/events/stream`,UI 不用 polling 就能实时刷 |
+| **失败通知** | Agent 上设 `notify_on_failure: "#sre"`,run 进入 `failed` 或 `cancelled` 时推 Slack;通用 webhook 也会收到 |
+| **控制台 dashboard** | 每天 cost 柱状图、按 Agent 排序的 cost、按 status 分布,`1d/7d/30d` 切换 |
 
-### 14. Web console (Next.js 15)
+### 14. Web 控制台(Next.js 15)
 
-Server-rendered, no client state. Eleven routes:
+服务端渲染,无客户端状态。11 个路由:
 
-| Route | What |
+| 路由 | 内容 |
 |---|---|
-| `/` | Top-line stats + recent runs across the tenant |
-| `/dashboard` | Cost & token charts, by-day + by-agent + by-status |
-| `/agents` | List with instant search (name / template / description) + template filter |
-| `/agents/new` | Create form (template picker + JSON params editor) |
-| `/agents/[id]` | Detail + manual trigger panel + recent runs |
-| `/runs` | Tenant-wide search: status / agent / trigger / summary + pagination |
-| `/runs/[id]` | Run summary + approvals + **live SSE timeline** + Cancel + Retry |
-| `/approvals` | Pending / approved / rejected with **bulk select** approve/reject |
-| `/schedule` | Cron-driven agents + computed next-fire times |
-| `/system` | Templates + connectors with live/mock status |
+| `/` | 总览统计 + 最近 runs |
+| `/dashboard` | cost & token 图表,按天/按 Agent/按 status |
+| `/agents` | 列表 + 实时搜索(name / template / description)+ template 下拉过滤 |
+| `/agents/new` | 创建表单(template 选择 + JSON params 编辑器) |
+| `/agents/[id]` | 详情 + 手动触发面板 + 最近 runs |
+| `/runs` | 跨 Agent 搜索:status / agent / trigger / summary + 分页 |
+| `/runs/[id]` | run 概要 + approvals + **实时 SSE 时间线** + Cancel + Retry |
+| `/approvals` | pending / approved / rejected,**复选批量** approve/reject |
+| `/schedule` | cron 驱动的 Agent + 计算出的下次触发时间 |
+| `/system` | 模板 + connector 的 live/mock 状态 |
 
-The nav shows a **tenant indicator** pulled from `/me` so operators
-always know which tenant they're acting on.
+导航栏从 `/me` 拉取**租户指示器**,运维永远清楚自己在操作哪个租户。
 
-### 15. Deployment
+### 15. 部署
 
 | | |
 |---|---|
-| **Dockerfile** | Multi-stage, ~150 MB runtime image, non-root user, healthcheck on `/healthz`. |
-| **Console Dockerfile** | Multi-stage Next.js build → minimal Node runtime. |
-| **`docker-compose.yml`** | Brings up api + console + Postgres in one command; passes Anthropic key + secrets via env. |
-| **Postgres-ready** | Just swap `PILOTHOUSE_DATABASE_URL` to `postgresql+asyncpg://…`; the compose stack does this automatically. |
-| **CI workflow** | `.github/workflows/ci.yml` runs ruff + pytest (mock mode) + Next.js build + Docker image smoke test on every push. |
+| **Dockerfile** | 多阶段,~150 MB 运行时镜像,非 root 用户,`/healthz` healthcheck |
+| **Console Dockerfile** | 多阶段 Next.js build → 极简 Node 运行时 |
+| **`docker-compose.yml`** | 一个命令拉起 api + console + Postgres;通过 env 传 Anthropic key 和其他密钥 |
+| **Postgres ready** | 把 `PILOTHOUSE_DATABASE_URL` 换成 `postgresql+asyncpg://…` 即可;compose stack 自动这么做 |
+| **CI workflow** | `.github/workflows/ci.yml` 每次 push 跑 ruff + pytest(mock 模式)+ Next.js build + Docker 镜像 smoke test |
 
 ---
 
-## Configuration
+## 配置
 
-All settings are env vars prefixed `PILOTHOUSE_`. A `.env` file is
-supported via pydantic-settings.
+所有配置都是 `PILOTHOUSE_` 前缀的环境变量,通过 pydantic-settings 加载,
+也支持 `.env` 文件。
 
-### Core
+### 核心
 
-| var | purpose | default |
+| 变量 | 用途 | 默认值 |
 |---|---|---|
-| `PILOTHOUSE_ANTHROPIC_API_KEY` | If set, runtime uses real Claude. Else mock. | `""` |
-| `PILOTHOUSE_MODEL_PLANNER` | Model id for the planner | `claude-opus-4-5` |
-| `PILOTHOUSE_MODEL_WORKER` | Model id for high-frequency small tasks | `claude-haiku-4-5` |
-| `PILOTHOUSE_DATABASE_URL` | SQLAlchemy URL | sqlite under `./var` |
-| `PILOTHOUSE_DATA_DIR` | Where SQLite + state files live | `./var` |
-| `PILOTHOUSE_DRY_RUN_DEFAULT` | New agents created in dry-run by default | `true` |
-| `PILOTHOUSE_HOST` / `PILOTHOUSE_PORT` | HTTP server bind | `127.0.0.1` / `8088` |
-| `PILOTHOUSE_MAX_TOOL_ITERATIONS` | Cap per run; failed when exceeded | `12` |
-| `PILOTHOUSE_MAX_OUTPUT_TOKENS` | Per-turn LLM output cap | `4096` |
+| `PILOTHOUSE_ANTHROPIC_API_KEY` | 设了就用真实 Claude,否则 mock | `""` |
+| `PILOTHOUSE_MODEL_PLANNER` | planner 模型 id | `claude-opus-4-5` |
+| `PILOTHOUSE_MODEL_WORKER` | 高频小任务的模型 id | `claude-haiku-4-5` |
+| `PILOTHOUSE_DATABASE_URL` | SQLAlchemy URL | `./var` 下的 sqlite |
+| `PILOTHOUSE_DATA_DIR` | SQLite + state 文件目录 | `./var` |
+| `PILOTHOUSE_DRY_RUN_DEFAULT` | 新 Agent 默认 dry-run | `true` |
+| `PILOTHOUSE_HOST` / `PILOTHOUSE_PORT` | HTTP 服务监听 | `127.0.0.1` / `8088` |
+| `PILOTHOUSE_MAX_TOOL_ITERATIONS` | 单个 run 的最大循环次数;超过即 failed | `12` |
+| `PILOTHOUSE_MAX_OUTPUT_TOKENS` | 单轮 LLM 输出上限 | `4096` |
 
-### Auth + safety
+### 鉴权 + 安全
 
-| var | purpose | default |
+| 变量 | 用途 | 默认值 |
 |---|---|---|
-| `PILOTHOUSE_REQUIRE_APPROVAL_FOR_WRITES` | Gate destructive tools on approval | `true` |
-| `PILOTHOUSE_API_KEYS` | Legacy: comma-separated keys seeded into the default tenant on bootstrap | `""` |
-| `PILOTHOUSE_APPROVAL_TTL_MINUTES` | Auto-reject pending approvals older than this | `60` |
-| `PILOTHOUSE_APPROVAL_SWEEP_INTERVAL_SECONDS` | How often the sweeper runs | `30` |
-| `PILOTHOUSE_DEDUP_WINDOW_SECONDS` | Trigger dedup window (0 to disable) | `60` |
-| `PILOTHOUSE_RATE_LIMIT_PER_MINUTE` | Per-tenant trigger cap (0 to disable) | `60` |
-| `PILOTHOUSE_METRICS_ENABLED` | Expose `/metrics` (Prometheus text) | `true` |
-| `PILOTHOUSE_GIT_BRANCH_PREFIX` | First segment of auto-PR branches | `pilothouse` |
-| `PILOTHOUSE_GIT_COMMIT_SIGNOFF` | Append `Signed-off-by:` to auto-commits | `false` |
-| `PILOTHOUSE_GIT_PR_DRAFT` | Open auto-PRs as drafts | `false` |
+| `PILOTHOUSE_REQUIRE_APPROVAL_FOR_WRITES` | 破坏性工具走审批门 | `true` |
+| `PILOTHOUSE_API_KEYS` | 旧版:逗号分隔,bootstrap 时灌入 default 租户 | `""` |
+| `PILOTHOUSE_APPROVAL_TTL_MINUTES` | 自动拒绝超期待审批 | `60` |
+| `PILOTHOUSE_APPROVAL_SWEEP_INTERVAL_SECONDS` | sweeper 运行间隔 | `30` |
+| `PILOTHOUSE_DEDUP_WINDOW_SECONDS` | 触发去重窗口(0 关闭) | `60` |
+| `PILOTHOUSE_RATE_LIMIT_PER_MINUTE` | 每租户触发上限(0 关闭) | `60` |
+| `PILOTHOUSE_METRICS_ENABLED` | 暴露 `/metrics` | `true` |
+| `PILOTHOUSE_GIT_BRANCH_PREFIX` | auto-PR 分支的第一段 | `pilothouse` |
+| `PILOTHOUSE_GIT_COMMIT_SIGNOFF` | auto-commit 末尾加 `Signed-off-by:` | `false` |
+| `PILOTHOUSE_GIT_PR_DRAFT` | 以 draft 形式开 auto-PR | `false` |
 
-### Connector credentials
+### Connector 凭证
 
-| var | enables |
+| 变量 | 启用 |
 |---|---|
-| `PILOTHOUSE_DATADOG_API_KEY` + `_APP_KEY` + `_SITE` | Live Datadog connector |
-| `PILOTHOUSE_GITHUB_TOKEN` | Live GitHub connector |
-| `PILOTHOUSE_PAGERDUTY_TOKEN` | Live PagerDuty connector |
-| `PILOTHOUSE_SLACK_BOT_TOKEN` | Live Slack connector + Slack notifications |
-| `PILOTHOUSE_KUBE_API_URL` + `_TOKEN` + `_CA_PATH` | Live Kubernetes connector |
-| `PILOTHOUSE_LINEAR_API_KEY` | Live Linear connector (`bug_auto_fixer`) |
+| `PILOTHOUSE_DATADOG_API_KEY` + `_APP_KEY` + `_SITE` | live Datadog |
+| `PILOTHOUSE_GITHUB_TOKEN` | live GitHub |
+| `PILOTHOUSE_PAGERDUTY_TOKEN` | live PagerDuty |
+| `PILOTHOUSE_SLACK_BOT_TOKEN` | live Slack + Slack 通知 |
+| `PILOTHOUSE_KUBE_API_URL` + `_TOKEN` + `_CA_PATH` | live Kubernetes |
+| `PILOTHOUSE_LINEAR_API_KEY` | live Linear(`bug_auto_fixer` 用) |
 
-### Webhook secrets (one per source so you can rotate independently)
+### Webhook 密钥(每个 source 一个,方便独立轮换)
 
-| var | scheme |
+| 变量 | 校验方案 |
 |---|---|
 | `PILOTHOUSE_GITHUB_WEBHOOK_SECRET` | GitHub `X-Hub-Signature-256` |
-| `PILOTHOUSE_SLACK_SIGNING_SECRET` | Slack v0 + 5-min window |
-| `PILOTHOUSE_PAGERDUTY_WEBHOOK_SECRET` | PagerDuty multi-key `v1=…` |
+| `PILOTHOUSE_SLACK_SIGNING_SECRET` | Slack v0 + 5 分钟时间窗 |
+| `PILOTHOUSE_PAGERDUTY_WEBHOOK_SECRET` | PagerDuty 多 key `v1=…` |
 | `PILOTHOUSE_DATADOG_WEBHOOK_SECRET` | Datadog `DD-Signature` |
-| `PILOTHOUSE_WEBHOOK_SECRET` | Generic HMAC-SHA256 (alertmanager + generic) |
+| `PILOTHOUSE_WEBHOOK_SECRET` | 通用 HMAC-SHA256(alertmanager + generic) |
 
-### Notifications
+### 通知
 
-| var | purpose |
+| 变量 | 用途 |
 |---|---|
-| `PILOTHOUSE_NOTIFY_WEBHOOK_URL` | Outbound URL invoked on `approval_requested` and `run_failure` |
+| `PILOTHOUSE_NOTIFY_WEBHOOK_URL` | `approval_requested` 和 `run_failure` 时调用的外部 URL |
 
 ---
 
-## CLI reference
+## CLI 参考
 
 ```
-# server / DB
+# 服务 / 数据库
 pilothouse serve                              # HTTP + scheduler + notifier
-pilothouse db init                            # create tables, bootstrap default tenant
+pilothouse db init                            # 建表 + 启动 default 租户
 
-# discovery
+# 发现
 pilothouse templates list
 pilothouse connectors list
 pilothouse connectors add-mcp NAME CMD ARG...        # stdio MCP server
@@ -504,38 +491,38 @@ pilothouse connectors add-mcp NAME --http URL \      # HTTP MCP server
     --header "Authorization=Bearer xxx" --destructive delete_user
 pilothouse connectors remove-mcp NAME
 
-# agents
+# Agents
 pilothouse agents create NAME TEMPLATE \
        --param service=checkout \
-       --param slack_channel='"#oncall"'      # JSON-parsed values
+       --param slack_channel='"#oncall"'      # 值会按 JSON 解析
 pilothouse agents list
 pilothouse agents show <id-or-name>
 pilothouse agents trigger <id> --file event.json
 pilothouse agents delete <id>
 
-# runs
+# Runs
 pilothouse runs show <run-id>
-pilothouse runs logs <run-id>                 # pretty colored timeline
+pilothouse runs logs <run-id>                 # 着色时间线
 pilothouse runs cancel <run-id> --by alice
 pilothouse runs retry <run-id>
 
-# approvals
-pilothouse approvals list                     # pending (default)
+# 审批
+pilothouse approvals list                     # 默认显示 pending
 pilothouse approvals show <approval-id>
 pilothouse approvals approve <approval-id> --by alice
 pilothouse approvals reject <approval-id> --by alice --reason "rotate first"
 pilothouse approvals approve-all --tool github_post_pr_comment --by alice
 pilothouse approvals reject-all --agent scanner-foo --by alice --reason "..."
-pilothouse sweep-approvals                    # one-shot TTL sweep
+pilothouse sweep-approvals                    # 一次性 TTL 清扫
 
-# tenants
+# 租户
 pilothouse tenants list
 pilothouse tenants create acme --display-name "Acme Corp"
-pilothouse tenants add-key acme               # auto-generates phk_… key
+pilothouse tenants add-key acme               # 自动生成 phk_… key
 pilothouse tenants add-key acme --key existing-key
 pilothouse tenants remove-key acme <key>
 pilothouse tenants set-quota acme --max-agents 10 --max-runs-per-day 500
-pilothouse tenants show-keys acme             # masked
+pilothouse tenants show-keys acme             # 掩码显示
 pilothouse tenants delete acme
 
 # GitOps
@@ -543,154 +530,151 @@ pilothouse plan -f agents.yaml
 pilothouse apply -f agents.yaml --auto-approve
 pilothouse export -o agents.yaml
 
-# misc
-pilothouse demo                               # bootstrap one of each + run
+# 杂项
+pilothouse demo                               # bootstrap 每种 Agent 各跑一次
 ```
 
 ---
 
 ## HTTP API
 
-OpenAPI auto-docs at `/docs`, ReDoc at `/redoc`. Endpoints are tagged
-in groups: `meta`, `agents`, `runs`, `approvals`, `manifest`, `stats`,
-`schedule`, `webhooks`, `metrics`.
+OpenAPI 自动文档在 `/docs`,ReDoc 在 `/redoc`。Endpoint 按 tag 分组:
+`meta` / `agents` / `runs` / `approvals` / `manifest` / `stats` /
+`schedule` / `webhooks` / `metrics`。
 
 ### meta
 
-| method | path | notes |
+| method | path | 说明 |
 |---|---|---|
 | GET | `/healthz` | liveness |
-| GET | `/me` | resolved tenant for the inbound API key |
-| GET | `/templates` | list templates |
-| GET | `/connectors` | list connectors + live/mock status |
+| GET | `/me` | 入站 API key 解析到的租户 |
+| GET | `/templates` | 模板列表 |
+| GET | `/connectors` | connector 列表 + live/mock 状态 |
 
 ### agents
 
-| method | path | notes |
+| method | path | 说明 |
 |---|---|---|
-| POST | `/agents` | create |
-| GET | `/agents` | list |
-| GET | `/agents/{id}` | get |
-| PATCH | `/agents/{id}` | update |
-| DELETE | `/agents/{id}` | delete |
-| POST | `/agents/{id}/trigger` | manual run, returns the new Run |
-| GET | `/agents/{id}/runs` | recent runs |
+| POST | `/agents` | 创建 |
+| GET | `/agents` | 列表 |
+| GET | `/agents/{id}` | 单个 |
+| PATCH | `/agents/{id}` | 更新 |
+| DELETE | `/agents/{id}` | 删除 |
+| POST | `/agents/{id}/trigger` | 手动触发,返回新 Run |
+| GET | `/agents/{id}/runs` | 最近 runs |
 
 ### runs
 
-| method | path | notes |
+| method | path | 说明 |
 |---|---|---|
-| GET | `/runs` | tenant-wide search: `?status=&agent=&trigger=&q=&limit=&offset=` |
-| GET | `/runs/{id}` | run summary |
-| GET | `/runs/{id}/events` | full audit log |
-| GET | `/runs/{id}/events/stream` | SSE: replay then live (`event: end` closes) |
-| GET | `/runs/{id}/export.json` | full audit bundle (run + agent + events + approvals) |
-| GET | `/runs/{id}/export.csv` | event timeline as CSV |
-| POST | `/runs/{id}/cancel` | `{"by":"…"}` — cooperative cancellation |
-| POST | `/runs/{id}/retry` | re-execute with the same trigger payload |
-| GET | `/runs/{id}/approvals` | approvals attached to a run |
+| GET | `/runs` | 租户级跨 Agent 搜索:`?status=&agent=&trigger=&q=&limit=&offset=` |
+| GET | `/runs/{id}` | run 概要 |
+| GET | `/runs/{id}/events` | 完整审计日志 |
+| GET | `/runs/{id}/events/stream` | SSE:先回放再实时(terminal 后 `event: end` 关闭) |
+| GET | `/runs/{id}/export.json` | 完整审计包(run + agent + events + approvals) |
+| GET | `/runs/{id}/export.csv` | 事件时间线 CSV |
+| POST | `/runs/{id}/cancel` | `{"by":"…"}` —— 协作式取消 |
+| POST | `/runs/{id}/retry` | 用同一 payload 重跑 |
+| GET | `/runs/{id}/approvals` | 这个 run 的审批 |
 
 ### approvals
 
-| method | path | notes |
+| method | path | 说明 |
 |---|---|---|
-| GET | `/approvals` | filter `?status=&tool=&agent=` |
-| GET | `/approvals/{id}` | get one |
-| POST | `/approvals/{id}/resolve` | `{"decision":"approve\|reject", "resolved_by", "reason"}` — auto-resumes when last approval clears |
-| POST | `/approvals/resolve-batch` | bulk by ids array OR by `filters: {tool?, agent?}` |
+| GET | `/approvals` | 过滤 `?status=&tool=&agent=` |
+| GET | `/approvals/{id}` | 单个 |
+| POST | `/approvals/{id}/resolve` | `{"decision":"approve\|reject", "resolved_by", "reason"}` —— 最后一个解决后自动 resume run |
+| POST | `/approvals/resolve-batch` | 批量:ids 数组或 `filters: {tool?, agent?}` |
 
-### manifest, stats, schedule, metrics
+### manifest / stats / schedule / metrics
 
-| method | path | notes |
+| method | path | 说明 |
 |---|---|---|
-| POST | `/manifest/plan` | compute diff against supplied manifest |
-| POST | `/manifest/apply` | plan + persist |
-| GET | `/manifest/export` | dump current state as a manifest |
-| GET | `/stats?days=N` | aggregated runs / tokens / cost |
-| GET | `/schedule` | scheduled agents + next-fire timestamps |
-| GET | `/metrics` | Prometheus text |
+| POST | `/manifest/plan` | 算 manifest 的 diff |
+| POST | `/manifest/apply` | plan + 持久化 |
+| GET | `/manifest/export` | 把当前状态导出成 manifest |
+| GET | `/stats?days=N` | 聚合 runs / tokens / cost |
+| GET | `/schedule` | 调度的 Agent + 下次触发时间 |
+| GET | `/metrics` | Prometheus 文本格式 |
 
 ### webhooks
 
-| method | path | notes |
+| method | path | 说明 |
 |---|---|---|
-| POST | `/webhooks/datadog/{agent_id}` | source-verified |
+| POST | `/webhooks/datadog/{agent_id}` | 按 source 校验签名 |
 | POST | `/webhooks/github/{agent_id}` | `X-Hub-Signature-256` |
-| POST | `/webhooks/pagerduty/{agent_id}` | multi-key `v1=…` |
+| POST | `/webhooks/pagerduty/{agent_id}` | 多 key `v1=…` |
 | POST | `/webhooks/slack/{agent_id}` | Slack v0 |
-| POST | `/webhooks/alertmanager/{agent_id}` | generic HMAC |
-| POST | `/webhooks/generic/{agent_id}` | generic HMAC |
-| POST | `/webhooks/slack/interactivity` | Slack interactive component callback (Approve / Reject buttons) |
+| POST | `/webhooks/alertmanager/{agent_id}` | 通用 HMAC |
+| POST | `/webhooks/generic/{agent_id}` | 通用 HMAC |
+| POST | `/webhooks/slack/interactivity` | Slack 交互组件回调(Approve / Reject 按钮) |
 
 ---
 
-## Tests
+## 测试
 
 ```bash
-uv sync --all-extras        # or `pip install -e ".[dev]"`
-uv run pytest -q            # or just `pytest -q` inside an activated venv
+uv sync --all-extras        # 或 `pip install -e ".[dev]"`
+uv run pytest -q            # 或在已激活的 venv 里直接 `pytest -q`
 ```
 
-The suite (150+ tests) runs entirely in mock mode — no Anthropic key,
-no external HTTP. CI runs the same on every push.
+测试套件(150+ 用例)完全在 mock 模式下跑 —— 不需要 Anthropic key,
+不打外部 HTTP。CI 每次 push 都跑同一套。
 
 ---
 
-## Execution backends
+## 执行后端
 
-Pilothouse picks one of three executors automatically from
-`PILOTHOUSE_TEMPORAL_ADDRESS` — the public orchestration API
-(`execute_agent`, `resume_run`, `cancel_run`, `retry_run`) is identical
-across all three:
+Pilothouse 根据 `PILOTHOUSE_TEMPORAL_ADDRESS` 在三种执行后端之间自动切换。
+公开的 orchestration API(`execute_agent` / `resume_run` /
+`cancel_run` / `retry_run`)三种后端完全一致:
 
-| Mode | env value | What you get |
+| 模式 | env 值 | 提供什么 |
 |---|---|---|
-| **in-process** | _unset_ (default) | Asyncio in the same process. Zero external infra. |
-| **Temporal dev** | `dev` | In-process Temporal dev server — **durable workflows on a single machine** without running a Temporal cluster. |
-| **Temporal cluster** | `host:7233` | Connects to a real Temporal cluster. Workflows survive process restarts; workers scale horizontally. |
+| **in-process** | _未设置_(默认) | 进程内 asyncio。零外部依赖 |
+| **Temporal dev** | `dev` | 进程内 Temporal dev server —— **单机就能拿到 durable workflow**,不需要部署 Temporal 集群 |
+| **Temporal 集群** | `host:7233` | 连真实 Temporal 集群。workflow 跨进程重启幸存,worker 可横向扩展 |
 
-Temporal mode wraps each Run as a `PilothouseAgentRun` workflow:
+Temporal 模式把每个 Run 包装成 `PilothouseAgentRun` workflow:
 
 ```
 client.start_workflow(PilothouseAgentRun.run, payload)
-  → run_agent_activity      # delegates to AgentRunner.start
-  → wait_condition          # parks workflow until approval_resolved signal
-  → resume_run_activity     # delegates to AgentRunner.resume
+  → run_agent_activity      # 代理给 AgentRunner.start
+  → wait_condition          # 等 approval_resolved 信号
+  → resume_run_activity     # 代理给 AgentRunner.resume
   → return run_id
 ```
 
-Cancellation routes through workflow signals; approvals through
-`approval_resolved` signals; nothing else in the system (templates,
-connectors, plugins, console, CLI) is aware Temporal is involved.
+取消走 workflow signal,审批解决也走 signal。除 orchestration 层外的
+代码(templates / connectors / plugins / 控制台 / CLI)完全不知道
+Temporal 的存在。
 
-`temporalio` is an **optional dependency**:
+`temporalio` 是**可选依赖**:
 
 ```bash
 # uv
-uv sync                                      # in-process only
-uv sync --extra temporal                     # dev / cluster mode available
+uv sync                                      # 只用 in-process
+uv sync --extra temporal                     # 同时支持 dev / 集群模式
 
 # pip
-pip install pilothouse                       # in-process only
-pip install 'pilothouse[temporal]'           # dev / cluster mode available
+pip install pilothouse                       # 只用 in-process
+pip install 'pilothouse[temporal]'           # 同时支持 dev / 集群模式
 ```
 
-Inspect the active mode with `pilothouse temporal status`.
+`pilothouse temporal status` 查看当前激活的模式。
 
-## Roadmap (not yet implemented)
+## Roadmap(尚未实现)
 
-- **RBAC inside a tenant** — currently flat (any tenant key can do
-  anything within the tenant).
-- **SSO / OAuth2 / SAML** for the console.
-- **Sandboxed code execution** for IaC plan/diff agents that need to
-  run terraform/opentofu locally.
-- **Conversation memory across runs** — long-running incident triage
-  agents that remember "I already looked at this last hour."
-- **Helm chart** for Kubernetes deployment.
-- **Python + TypeScript SDKs** as separate published packages.
+- **租户内 RBAC** —— 当前是平面(同一租户的 key 能做该租户的任何事)
+- **SSO / OAuth2 / SAML** —— 控制台登录
+- **沙箱化代码执行** —— 给需要本地跑 terraform/opentofu 的 IaC plan/diff
+  Agent 准备的
+- **跨 run 的对话记忆** —— 长跑事故分诊 Agent 能记得"上一小时已经看过这个"
+- **Helm chart** —— Kubernetes 部署
+- **Python + TypeScript SDK** —— 作为单独发布的包
 
 ---
 
-## License
+## 许可证
 
 Apache-2.0.
