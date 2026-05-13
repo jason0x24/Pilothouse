@@ -698,4 +698,9 @@ Inspect the active mode with `pilothouse temporal status`.
 
 ## License
 
-Apache-2.0.
+[MIT](./LICENSE) — one of the most permissive OSI-approved licenses.
+Commercial use, modification, closed-source derivatives,
+redistribution, and sub-licensing are all allowed; the only obligation
+is to preserve the copyright notice and license text when
+redistributing. Again: this project is published for learning purposes
+only, with no warranty and no support.
