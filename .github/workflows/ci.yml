@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  python:
+    name: Python tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Lint
+        run: |
+          ruff check pilothouse tests
+
+      - name: Run tests
+        env:
+          # Force mock mode regardless of repo secrets — CI must be
+          # reproducible without external API access.
+          PILOTHOUSE_ANTHROPIC_API_KEY: ""
+        run: |
+          pytest -q
+
+  console:
+    name: Next.js build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: console
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: console/package.json
+
+      - name: Install
+        run: npm install --silent
+
+      - name: Build
+        run: npm run build
+
+  docker:
+    name: Docker images build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [python, console]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build api image
+        run: docker build -t pilothouse:ci .
+
+      - name: Build console image
+        run: docker build -t pilothouse-console:ci ./console
+
+      - name: Smoke test api
+        run: |
+          docker run -d --name api -p 8088:8088 pilothouse:ci
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8088/healthz; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs api
+          exit 1

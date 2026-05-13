@@ -1,0 +1,54 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pilothouse"
+version = "0.1.0"
+description = "AI DevOps Copilot platform - configure once, agents run on triggers across CI/CD, monitoring and IaC."
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "Pilothouse" }]
+license = { text = "Apache-2.0" }
+dependencies = [
+    "anthropic>=0.40.0",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "pydantic>=2.9.0",
+    "pydantic-settings>=2.5.0",
+    "sqlalchemy>=2.0.35",
+    "aiosqlite>=0.20.0",
+    "greenlet>=3.1.0",
+    "apscheduler>=3.10.4",
+    "click>=8.1.7",
+    "rich>=13.9.0",
+    "httpx>=0.27.2",
+    "pyyaml>=6.0.2",
+    "python-multipart>=0.0.12",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+    "ruff>=0.6.0",
+]
+# Enables PILOTHOUSE_TEMPORAL_ADDRESS-driven workflow execution.
+# Optional: leave unset and Pilothouse runs everything in-process.
+temporal = [
+    "temporalio>=1.7",
+]
+
+[project.scripts]
+pilothouse = "pilothouse.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["pilothouse"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

@@ -1,0 +1,58 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+build/
+dist/
+.eggs/
+
+# Virtualenv / uv
+.venv/
+venv/
+.env
+.env.*
+!.env.example
+
+# Test / cache
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.cache/
+.mypy_cache/
+.ruff_cache/
+
+# Pilothouse runtime data
+var/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Node / Next.js (console/)
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+.npm/
+.pnpm-store/
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+logs/
+
+# Local overrides
+local_settings.py

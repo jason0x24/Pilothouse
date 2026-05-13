@@ -1,0 +1,70 @@
+# Local stack for Pilothouse.
+#
+#   docker compose up        # api on :8088, console on :3000, postgres on :5432
+#   docker compose up api    # api only — uses an internal Postgres unless you
+#                            # override PILOTHOUSE_DATABASE_URL with a SQLite URL
+#
+# A real production deploy would run the api behind a TLS terminator,
+# point PILOTHOUSE_DATABASE_URL at a managed Postgres, and use the
+# image tags published by your CI rather than the local build.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: pilothouse
+      POSTGRES_PASSWORD: pilothouse
+      POSTGRES_DB: pilothouse
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pilothouse"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PILOTHOUSE_HOST: 0.0.0.0
+      PILOTHOUSE_PORT: 8088
+      PILOTHOUSE_DATABASE_URL: postgresql+asyncpg://pilothouse:pilothouse@postgres:5432/pilothouse
+      # Anthropic key — pass through from your shell so you can switch
+      # between mock and live runs without rebuilding the image:
+      PILOTHOUSE_ANTHROPIC_API_KEY: ${PILOTHOUSE_ANTHROPIC_API_KEY:-}
+      # Approval routing & API auth example values:
+      PILOTHOUSE_NOTIFY_WEBHOOK_URL: ${PILOTHOUSE_NOTIFY_WEBHOOK_URL:-}
+      PILOTHOUSE_API_KEYS: ${PILOTHOUSE_API_KEYS:-}
+    ports:
+      - "8088:8088"
+    volumes:
+      - api-data:/data
+    restart: unless-stopped
+
+  console:
+    build:
+      context: ./console
+      dockerfile: Dockerfile
+    depends_on:
+      - api
+    environment:
+      # The console is a server-rendered Next.js app; it talks to the
+      # API over the docker network.
+      PILOTHOUSE_API: http://api:8088
+      # The browser-side URL used for SSE + cancel/retry. Set to the
+      # externally-reachable URL of `api` in real deploys.
+      NEXT_PUBLIC_PILOTHOUSE_API: http://localhost:8088
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+
+volumes:
+  pg-data:
+  api-data:
