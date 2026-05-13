@@ -227,6 +227,11 @@ class AgentRunner:
     async def _drive(self, *, run: Run, state: dict, tools: list[Tool]) -> RunOutcome:
         settings = get_settings()
         provider = get_provider(settings)
+        # `model_planner` is passed verbatim to the selected provider's
+        # SDK — operators are free to use any model id the provider
+        # accepts (`claude-opus-4-5`, `gpt-4o`, `anthropic/claude-…`
+        # for OpenRouter, etc.). Pilothouse does not maintain a model
+        # whitelist.
         tools_schema = [t.to_anthropic() for t in tools]
         tools_by_name = {t.name: t for t in tools}
 

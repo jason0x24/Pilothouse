@@ -5,27 +5,42 @@ the platform is single-development-line; see `git log` for finer grain.
 
 ## Unreleased
 
-### Multi-provider LLM support via LiteLLM
+### Multi-provider LLM support (Anthropic / OpenAI / OpenRouter)
 
-- **100+ models via LiteLLM** — a new `pilothouse/agent/providers/`
-  package routes every real LLM call through
-  [LiteLLM](https://docs.litellm.ai/). Out of the box: Anthropic,
-  OpenAI, OpenRouter, AWS Bedrock, Google Vertex AI, Gemini, Azure
-  OpenAI, Groq, Mistral, Together, Cohere, Ollama, vLLM, LM Studio,
-  and 90+ more — selected purely by the model-id prefix in
-  `PILOTHOUSE_MODEL_PLANNER`.
-- **Two providers, by design** — `MockProvider` (deterministic replay
-  for keyless local demos + the test suite) and `LiteLLMProvider`
-  (everything else). Selection is auto: any LLM API key configured →
-  LiteLLM; nothing → mock.
-- **Anthropic shape preserved internally** — the runtime, templates,
-  connectors, persisted state, and the entire test suite still speak
-  Anthropic-style content blocks. Translation to/from OpenAI shape
-  happens inside `litellm_provider.py` and is unit-tested with 25
-  cases covering tool schemas, assistant `tool_use` blocks, user
-  `tool_result` blocks, finish_reason mapping, malformed-argument
-  fallback, and end-to-end via a monkey-patched `litellm.acompletion`.
-- **Total test count: 175** (was 150; +25 new).
+- **Three real providers + mock.** A new `pilothouse/agent/providers/`
+  package ships:
+    - `AnthropicProvider` — wraps the official `anthropic` SDK
+      (Anthropic-native: no translation overhead).
+    - `OpenAIProvider` — wraps the official `openai` SDK.
+    - `OpenRouterProvider` — same `openai` SDK pointed at OpenRouter
+      with optional X-Title / HTTP-Referer attribution headers.
+    - `MockProvider` — deterministic replay for keyless local demos
+      and the test suite (unchanged behaviour).
+- **Selection.** `PILOTHOUSE_MODEL_PROVIDER` picks one explicitly
+  (`anthropic` / `openai` / `openrouter` / `mock`); empty value
+  auto-detects from whichever API key is set, with priority
+  anthropic > openrouter > openai > mock.
+- **Free-form model ids.** `PILOTHOUSE_MODEL_PLANNER` and
+  `PILOTHOUSE_MODEL_WORKER` are passed verbatim to the provider's
+  SDK. No model whitelist, no aliases, no prefix gymnastics.
+- **Registry pattern for future providers.** Adding Google Gemini,
+  AWS Bedrock, Mistral, etc. is three small edits: write a class
+  satisfying the `LLMProvider` protocol, add one row to
+  `PROVIDER_FACTORIES` in `providers/__init__.py`, add a credential
+  field to `Settings`. The runtime, templates, connectors,
+  orchestration, tests, and CLI never change.
+- **Anthropic shape preserved internally.** The runtime, templates,
+  persisted run state, and the entire test suite still speak
+  Anthropic-style content blocks. The OpenAI ↔ Anthropic translation
+  lives in one file (`openai_compat.py`) and is unit-tested with
+  cases for tool schemas, assistant `tool_use` blocks, user
+  `tool_result` blocks, finish_reason mapping, and malformed-argument
+  fallback.
+- **New CLI:** `pilothouse providers list` (table of registered
+  providers + which is active) and `pilothouse providers doctor`
+  (exits non-zero if the selected provider has no credential —
+  CI-friendly pre-deploy gate).
+- **Total test count: 179** (was 150; +29 new).
 
 ### Execution backends
 

@@ -381,71 +381,75 @@ Pilothouse 主机 shell 权限的运维能动。
 | `PILOTHOUSE_DATABASE_URL` | `./var` 下 sqlite | SQLAlchemy URL |
 | `PILOTHOUSE_HOST` / `PILOTHOUSE_PORT` | `127.0.0.1` / `8088` | HTTP 监听 |
 
-### LLM provider —— 一个抽象层覆盖 100+ 模型
+### LLM provider
 
-真实 LLM 调用统一走 [LiteLLM](https://docs.litellm.ai/),它内部对接了几乎所有主流厂商的 API。**路由完全由 model id 前缀决定**,改 `PILOTHOUSE_MODEL_PLANNER` 就换模型:
+Pilothouse 目前支持三个真实厂商 —— **Anthropic**、**OpenAI**、**OpenRouter**,
+加一个 `mock` provider 用于免 key 本地 demo 和测试集。
 
-| 前缀 | 厂商 | 鉴权 env |
+选个厂商 → 配 key → 设 model id —— 完事。Pilothouse 把 model id 原样传给
+厂商 SDK,所以厂商支持的任何模型都能用。以后加新厂商只改一个文件:
+`pilothouse/agent/providers/` 下新增一个类 + `__init__.py` 注册一行。
+
+| Provider | 鉴权 env | 模型 id 示例 |
 |---|---|---|
-| `anthropic/…` 或 `claude-…` | Anthropic 原生 | `PILOTHOUSE_ANTHROPIC_API_KEY` |
-| `openai/…` 或 `gpt-…`、`o1-…`、`o3-…` | OpenAI 原生 | `PILOTHOUSE_OPENAI_API_KEY` |
-| `openrouter/<厂商>/<模型>` | OpenRouter | `PILOTHOUSE_OPENROUTER_API_KEY` |
-| `bedrock/anthropic.claude-…` | AWS Bedrock | `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` + `AWS_REGION_NAME` |
-| `vertex_ai/claude-…` | Google Vertex AI | `GOOGLE_APPLICATION_CREDENTIALS` |
-| `gemini/gemini-…` | Google Gemini | `GEMINI_API_KEY` |
-| `azure/<deployment>` | Azure OpenAI | `AZURE_API_KEY` + `AZURE_API_BASE` |
-| `groq/…` | Groq | `GROQ_API_KEY` |
-| `mistral/…` | Mistral La Plateforme | `MISTRAL_API_KEY` |
-| `together_ai/…` | Together AI | `TOGETHER_API_KEY` |
-| `cohere/…` | Cohere | `COHERE_API_KEY` |
-| `ollama/…` | 本地 Ollama | (无需 key) |
+| `anthropic` | `PILOTHOUSE_ANTHROPIC_API_KEY` | `claude-opus-4-5`、`claude-sonnet-4-5`、`claude-haiku-4-5` |
+| `openai` | `PILOTHOUSE_OPENAI_API_KEY` | `gpt-4o`、`gpt-4o-mini`、`o3-mini` |
+| `openrouter` | `PILOTHOUSE_OPENROUTER_API_KEY` | `anthropic/claude-sonnet-4-5`、`openai/gpt-4o`、`google/gemini-2.0-pro`、`meta-llama/llama-3.3-70b-instruct` |
 
-完整列表见 [LiteLLM 文档](https://docs.litellm.ai/docs/providers)。
+完整配置:
 
 | 变量 | 默认值 | 用途 |
 |---|---|---|
-| `PILOTHOUSE_MODEL_PROVIDER` | `""`(自动) | `mock` 强制 mock;`litellm` 强制走 LiteLLM;空 = 自动 |
-| `PILOTHOUSE_MODEL_PLANNER` | `claude-opus-4-5` | planner 模型 id(必须是 LiteLLM 认识的) |
-| `PILOTHOUSE_MODEL_WORKER` | `claude-haiku-4-5` | 高频小任务模型 |
-| `PILOTHOUSE_ANTHROPIC_API_KEY` | `""` | Anthropic 原生 key |
-| `PILOTHOUSE_OPENROUTER_API_KEY` | `""` | OpenRouter key |
-| `PILOTHOUSE_OPENAI_API_KEY` | `""` | OpenAI 原生 或 任意 OpenAI-compat 端点(配 `PILOTHOUSE_OPENAI_BASE_URL`) |
-| `PILOTHOUSE_OPENAI_BASE_URL` | `""` | 指向 Together / Groq / Mistral / vLLM / LM Studio |
+| `PILOTHOUSE_MODEL_PROVIDER` | `""`(自动) | `anthropic` / `openai` / `openrouter` / `mock`;空 = 按哪个 key 在自动选(优先级:anthropic > openrouter > openai > mock) |
+| `PILOTHOUSE_MODEL_PLANNER` | `claude-opus-4-5` | 高强度推理任务用的 model id |
+| `PILOTHOUSE_MODEL_WORKER` | `claude-haiku-4-5` | 高频小任务用的 model id |
+| `PILOTHOUSE_ANTHROPIC_API_KEY` | `""` | Anthropic API key |
+| `PILOTHOUSE_OPENAI_API_KEY` | `""` | OpenAI API key(或自托管 compat 端点配 `PILOTHOUSE_OPENAI_BASE_URL`) |
+| `PILOTHOUSE_OPENROUTER_API_KEY` | `""` | OpenRouter API key |
+| `PILOTHOUSE_OPENAI_BASE_URL` | `""` | 把 OpenAI 客户端指向自托管 compat 端点(vLLM、LM Studio 等) |
 | `PILOTHOUSE_OPENROUTER_APP_NAME` / `_SITE_URL` | `""` / `""` | OpenRouter 用量归因 header |
 
 示例:
 
 ```bash
-# Anthropic 原生
+# Anthropic
 PILOTHOUSE_ANTHROPIC_API_KEY=sk-ant-...
 PILOTHOUSE_MODEL_PLANNER=claude-opus-4-5
+PILOTHOUSE_MODEL_WORKER=claude-haiku-4-5
 
-# OpenRouter —— Claude
-PILOTHOUSE_OPENROUTER_API_KEY=sk-or-v1-...
-PILOTHOUSE_MODEL_PLANNER=openrouter/anthropic/claude-sonnet-4-5
-
-# OpenRouter —— 切到 GPT-4o,改一行就行
-PILOTHOUSE_OPENROUTER_API_KEY=sk-or-v1-...
-PILOTHOUSE_MODEL_PLANNER=openrouter/openai/gpt-4o
-
-# OpenAI 原生
+# OpenAI
 PILOTHOUSE_OPENAI_API_KEY=sk-...
 PILOTHOUSE_MODEL_PLANNER=gpt-4o
+PILOTHOUSE_MODEL_WORKER=gpt-4o-mini
 
-# AWS Bedrock —— 用标准 AWS 凭证
-AWS_ACCESS_KEY_ID=...
-AWS_SECRET_ACCESS_KEY=...
-AWS_REGION_NAME=us-east-1
-PILOTHOUSE_MODEL_PLANNER=bedrock/anthropic.claude-3-5-sonnet-20241022-v2:0
+# OpenRouter —— 用它库里任意模型
+PILOTHOUSE_OPENROUTER_API_KEY=sk-or-v1-...
+PILOTHOUSE_MODEL_PLANNER=anthropic/claude-sonnet-4-5
+PILOTHOUSE_MODEL_WORKER=openai/gpt-4o-mini
 
-# 本地 Llama via vLLM / LM Studio(OpenAI-compat)
+# 自托管 vLLM / LM Studio(OpenAI-compat)
 PILOTHOUSE_OPENAI_API_KEY=sk-local
 PILOTHOUSE_OPENAI_BASE_URL=http://127.0.0.1:8000/v1
-PILOTHOUSE_MODEL_PLANNER=openai/meta-llama/Llama-3.1-70B-Instruct
-
-# 本地 Ollama(无 key)
-PILOTHOUSE_MODEL_PLANNER=ollama/llama3
+PILOTHOUSE_MODEL_PLANNER=meta-llama/Llama-3.1-70B-Instruct
 ```
+
+验证配置:
+
+```bash
+uv run pilothouse providers list      # 列出全部 provider + 当前激活的
+uv run pilothouse providers doctor    # 配错了非零退出
+```
+
+**以后加新厂商**(Google Gemini、Mistral、AWS Bedrock 等):
+
+1. 在 `pilothouse/agent/providers/<name>_provider.py` 写一个类,
+   实现 `LLMProvider` protocol(一个 async 方法 `complete(...)`,
+   返回 Anthropic 形状的 blocks)。
+2. 在 `pilothouse/agent/providers/__init__.py` 的 `PROVIDER_FACTORIES`
+   字典里加一行映射 `name → (Settings) → LLMProvider`。
+3. 在 `pilothouse/config.py` 的 `Settings` 里加对应的凭证字段。
+
+接口就这么大。模板、连接器、runtime、orchestration、测试和 CLI 都不变。
 
 ### 鉴权 + 安全
 

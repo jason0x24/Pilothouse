@@ -400,73 +400,79 @@ auto-loaded.
 | `PILOTHOUSE_DATABASE_URL` | sqlite under `./var` | SQLAlchemy URL |
 | `PILOTHOUSE_HOST` / `PILOTHOUSE_PORT` | `127.0.0.1` / `8088` | HTTP server bind |
 
-### LLM provider — 100+ models via LiteLLM
+### LLM providers
 
-Real LLM calls go through [LiteLLM](https://docs.litellm.ai/), which
-speaks every major provider's API. **Routing is purely by model-id
-prefix**, so you swap models by setting `PILOTHOUSE_MODEL_PLANNER`:
+Pilothouse currently supports three real providers — **Anthropic**,
+**OpenAI**, **OpenRouter** — plus a `mock` provider that powers
+keyless local demos and the test suite.
 
-| Prefix | Provider | Auth env var |
+Pick a provider, give it a key, set the model id you want — that's it.
+Pilothouse passes the model id verbatim to the provider's SDK, so any
+model the provider exposes is usable. Adding a new provider later is
+a 1-file change in `pilothouse/agent/providers/`.
+
+| Provider | Credential env | Example model ids |
 |---|---|---|
-| `anthropic/…` or `claude-…` | Anthropic native | `PILOTHOUSE_ANTHROPIC_API_KEY` |
-| `openai/…` or `gpt-…`, `o1-…`, `o3-…` | OpenAI native | `PILOTHOUSE_OPENAI_API_KEY` |
-| `openrouter/<vendor>/<model>` | OpenRouter | `PILOTHOUSE_OPENROUTER_API_KEY` |
-| `bedrock/anthropic.claude-…` | AWS Bedrock | `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` + `AWS_REGION_NAME` |
-| `vertex_ai/claude-…` | Google Vertex AI | `GOOGLE_APPLICATION_CREDENTIALS` |
-| `gemini/gemini-…` | Google Gemini | `GEMINI_API_KEY` |
-| `azure/<deployment>` | Azure OpenAI | `AZURE_API_KEY` + `AZURE_API_BASE` |
-| `groq/…` | Groq | `GROQ_API_KEY` |
-| `mistral/…` | Mistral La Plateforme | `MISTRAL_API_KEY` |
-| `together_ai/…` | Together AI | `TOGETHER_API_KEY` |
-| `cohere/…` | Cohere | `COHERE_API_KEY` |
-| `ollama/…` | Local Ollama | (no key) |
+| `anthropic` | `PILOTHOUSE_ANTHROPIC_API_KEY` | `claude-opus-4-5`, `claude-sonnet-4-5`, `claude-haiku-4-5` |
+| `openai` | `PILOTHOUSE_OPENAI_API_KEY` | `gpt-4o`, `gpt-4o-mini`, `o3-mini` |
+| `openrouter` | `PILOTHOUSE_OPENROUTER_API_KEY` | `anthropic/claude-sonnet-4-5`, `openai/gpt-4o`, `google/gemini-2.0-pro`, `meta-llama/llama-3.3-70b-instruct` |
 
-The full list lives in the [LiteLLM provider docs](https://docs.litellm.ai/docs/providers).
+Config reference:
 
 | Var | Default | Purpose |
 |---|---|---|
-| `PILOTHOUSE_MODEL_PROVIDER` | `""` (auto) | `mock` to force keyless replay; `litellm` to force real LLM; empty = auto |
-| `PILOTHOUSE_MODEL_PLANNER` | `claude-opus-4-5` | Model id — must match LiteLLM's catalogue |
-| `PILOTHOUSE_MODEL_WORKER` | `claude-haiku-4-5` | Model for high-frequency small tasks |
-| `PILOTHOUSE_ANTHROPIC_API_KEY` | `""` | Anthropic native key |
-| `PILOTHOUSE_OPENROUTER_API_KEY` | `""` | OpenRouter key |
-| `PILOTHOUSE_OPENAI_API_KEY` | `""` | OpenAI native, or any OpenAI-compat endpoint with `PILOTHOUSE_OPENAI_BASE_URL` |
-| `PILOTHOUSE_OPENAI_BASE_URL` | `""` | Point at Together / Groq / Mistral / vLLM / LM Studio |
+| `PILOTHOUSE_MODEL_PROVIDER` | `""` (auto) | `anthropic` / `openai` / `openrouter` / `mock`; empty = auto-detect from whichever API key is set (priority: anthropic > openrouter > openai > mock) |
+| `PILOTHOUSE_MODEL_PLANNER` | `claude-opus-4-5` | Model id for the high-reasoning planner role |
+| `PILOTHOUSE_MODEL_WORKER` | `claude-haiku-4-5` | Model id for high-frequency small steps |
+| `PILOTHOUSE_ANTHROPIC_API_KEY` | `""` | Anthropic API key |
+| `PILOTHOUSE_OPENAI_API_KEY` | `""` | OpenAI API key (or self-hosted OpenAI-compat with `PILOTHOUSE_OPENAI_BASE_URL`) |
+| `PILOTHOUSE_OPENROUTER_API_KEY` | `""` | OpenRouter API key |
+| `PILOTHOUSE_OPENAI_BASE_URL` | `""` | Point OpenAI at a self-hosted compat endpoint (vLLM, LM Studio, …) |
 | `PILOTHOUSE_OPENROUTER_APP_NAME` / `_SITE_URL` | `""` / `""` | OpenRouter attribution headers |
 
 Examples:
 
 ```bash
-# Anthropic native
+# Anthropic
 PILOTHOUSE_ANTHROPIC_API_KEY=sk-ant-...
 PILOTHOUSE_MODEL_PLANNER=claude-opus-4-5
+PILOTHOUSE_MODEL_WORKER=claude-haiku-4-5
 
-# OpenRouter — Claude
-PILOTHOUSE_OPENROUTER_API_KEY=sk-or-v1-...
-PILOTHOUSE_MODEL_PLANNER=openrouter/anthropic/claude-sonnet-4-5
-
-# OpenRouter — GPT-4o, just by changing the model id
-PILOTHOUSE_OPENROUTER_API_KEY=sk-or-v1-...
-PILOTHOUSE_MODEL_PLANNER=openrouter/openai/gpt-4o
-
-# OpenAI native
+# OpenAI
 PILOTHOUSE_OPENAI_API_KEY=sk-...
 PILOTHOUSE_MODEL_PLANNER=gpt-4o
+PILOTHOUSE_MODEL_WORKER=gpt-4o-mini
 
-# AWS Bedrock — uses standard AWS creds
-AWS_ACCESS_KEY_ID=...
-AWS_SECRET_ACCESS_KEY=...
-AWS_REGION_NAME=us-east-1
-PILOTHOUSE_MODEL_PLANNER=bedrock/anthropic.claude-3-5-sonnet-20241022-v2:0
+# OpenRouter — any model in OpenRouter's catalogue
+PILOTHOUSE_OPENROUTER_API_KEY=sk-or-v1-...
+PILOTHOUSE_MODEL_PLANNER=anthropic/claude-sonnet-4-5
+PILOTHOUSE_MODEL_WORKER=openai/gpt-4o-mini
 
-# Local Llama via vLLM / LM Studio (OpenAI-compat)
+# Self-hosted vLLM / LM Studio (OpenAI-compat)
 PILOTHOUSE_OPENAI_API_KEY=sk-local
 PILOTHOUSE_OPENAI_BASE_URL=http://127.0.0.1:8000/v1
-PILOTHOUSE_MODEL_PLANNER=openai/meta-llama/Llama-3.1-70B-Instruct
-
-# Local Ollama (no key)
-PILOTHOUSE_MODEL_PLANNER=ollama/llama3
+PILOTHOUSE_MODEL_PLANNER=meta-llama/Llama-3.1-70B-Instruct
 ```
+
+Verify your config:
+
+```bash
+uv run pilothouse providers list      # all providers + which is active
+uv run pilothouse providers doctor    # exits non-zero if not usable
+```
+
+**Adding a new provider** (e.g. Google Gemini, Mistral, AWS Bedrock):
+
+1. Create `pilothouse/agent/providers/<name>_provider.py` with a class
+   that satisfies the `LLMProvider` protocol (one async method,
+   `complete(...)`, returning Anthropic-shape blocks).
+2. Add one row to `PROVIDER_FACTORIES` in
+   `pilothouse/agent/providers/__init__.py` mapping the name to a
+   `(Settings) → LLMProvider` factory.
+3. Add the credential field(s) to `Settings` in `pilothouse/config.py`.
+
+That's the entire surface. Templates, connectors, the runtime,
+orchestration, tests, and the CLI don't change.
 
 ### Auth + safety
 

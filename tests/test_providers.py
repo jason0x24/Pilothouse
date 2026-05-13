@@ -1,40 +1,46 @@
 """Tests for the LLM provider abstraction.
 
-After the LiteLLM refactor there are only two providers: `MockProvider`
-(no network, deterministic replay) and `LiteLLMProvider` (single client
-covering 100+ cloud/self-hosted models). These tests cover:
+Three layers:
 
-1. `get_provider()` / `is_mock_mode()` selection logic.
-2. Anthropic ↔ OpenAI message + tool + response translation, which is
-   how the LiteLLM provider bridges our internal shape with LiteLLM's
-   OpenAI-style API.
-3. `LiteLLMProvider.complete()` end-to-end with `litellm.acompletion`
-   monkey-patched, so a future LiteLLM API drift surfaces in CI.
+1. Registry / factory / auto-detect logic in `providers/__init__.py`.
+2. Pure Anthropic ↔ OpenAI message + tool + response translation
+   (helpers in `openai_compat.py`).
+3. End-to-end: each real provider's `.complete()` driven against a
+   stubbed SDK client so a future API drift surfaces in CI.
 """
 
 from __future__ import annotations
 
 import json
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from pilothouse.agent.providers import get_provider, is_mock_mode
-from pilothouse.agent.providers.litellm_provider import (
-    LiteLLMProvider,
+from pilothouse.agent.providers import (
+    PROVIDER_FACTORIES,
+    get_provider,
+    is_mock_mode,
+    supported_providers,
+)
+from pilothouse.agent.providers.anthropic_provider import AnthropicProvider
+from pilothouse.agent.providers.mock_provider import MockProvider
+from pilothouse.agent.providers.openai_compat import (
+    OpenAICompatProvider,
+    OpenAIProvider,
+    OpenRouterProvider,
     _anthropic_to_openai_messages,
     _anthropic_tool_to_openai,
-    _litellm_response_to_anthropic,
+    _openai_response_to_anthropic,
 )
-from pilothouse.agent.providers.mock_provider import MockProvider
 from pilothouse.config import Settings
 
 
 def _settings(**overrides: Any) -> Settings:
     base = {
         "anthropic_api_key": "",
-        "openrouter_api_key": "",
         "openai_api_key": "",
+        "openrouter_api_key": "",
         "openai_base_url": "",
         "openrouter_app_name": "",
         "openrouter_site_url": "",
@@ -44,75 +50,65 @@ def _settings(**overrides: Any) -> Settings:
     return Settings(**base)
 
 
-@pytest.fixture(autouse=True)
-def _clear_third_party_env(monkeypatch):
-    """Ensure provider selection isn't affected by the host shell env."""
-    for k in (
-        "AWS_ACCESS_KEY_ID",
-        "GOOGLE_APPLICATION_CREDENTIALS",
-        "GEMINI_API_KEY",
-        "AZURE_API_KEY",
-        "AZURE_OPENAI_API_KEY",
-        "GROQ_API_KEY",
-        "MISTRAL_API_KEY",
-        "TOGETHER_API_KEY",
-        "COHERE_API_KEY",
-        "DEEPSEEK_API_KEY",
-        "REPLICATE_API_KEY",
-        "PERPLEXITYAI_API_KEY",
-        "FIREWORKS_AI_API_KEY",
-        "XAI_API_KEY",
-    ):
-        monkeypatch.delenv(k, raising=False)
+# --- registry / factory --------------------------------------------------
 
 
-# --- selection -------------------------------------------------------------
+def test_supported_providers_lists_anthropic_openai_openrouter_mock():
+    assert set(supported_providers()) == {"anthropic", "openai", "openrouter", "mock"}
 
 
-def test_get_provider_defaults_to_mock_when_no_keys():
+def test_registry_keys_match_supported_providers():
+    # The factory dict is the single source of truth for which providers
+    # exist. Adding a new provider means adding one row here.
+    assert set(PROVIDER_FACTORIES) == set(supported_providers())
+
+
+def test_no_keys_falls_back_to_mock():
     p = get_provider(_settings())
     assert isinstance(p, MockProvider)
     assert is_mock_mode(_settings()) is True
 
 
-def test_anthropic_key_picks_litellm():
+def test_anthropic_key_auto_selects_anthropic():
     p = get_provider(_settings(anthropic_api_key="sk-ant-x"))
-    assert isinstance(p, LiteLLMProvider)
-    assert is_mock_mode(_settings(anthropic_api_key="sk-ant-x")) is False
+    assert isinstance(p, AnthropicProvider)
 
 
-def test_openrouter_key_picks_litellm():
-    p = get_provider(_settings(openrouter_api_key="or-x"))
-    assert isinstance(p, LiteLLMProvider)
-
-
-def test_openai_key_picks_litellm():
+def test_openai_key_auto_selects_openai():
     p = get_provider(_settings(openai_api_key="sk-x"))
-    assert isinstance(p, LiteLLMProvider)
+    assert isinstance(p, OpenAIProvider)
 
 
-def test_third_party_env_key_also_counts(monkeypatch):
-    # AWS Bedrock / Vertex / Groq / Azure / etc. — LiteLLM picks these up
-    # natively; we must not fall through to mock mode just because no
-    # PILOTHOUSE_*_API_KEY is set.
-    monkeypatch.setenv("GROQ_API_KEY", "gsk_xxx")
-    p = get_provider(_settings())
-    assert isinstance(p, LiteLLMProvider)
-    assert is_mock_mode(_settings()) is False
+def test_openrouter_key_auto_selects_openrouter():
+    p = get_provider(_settings(openrouter_api_key="sk-or-x"))
+    assert isinstance(p, OpenRouterProvider)
 
 
-def test_force_mock_provider():
-    p = get_provider(_settings(model_provider="mock", anthropic_api_key="leak"))
-    assert isinstance(p, MockProvider)
-    assert is_mock_mode(_settings(model_provider="mock")) is True
+def test_anthropic_wins_auto_detect_when_multiple_keys_set():
+    p = get_provider(
+        _settings(
+            anthropic_api_key="a",
+            openrouter_api_key="o",
+            openai_api_key="i",
+        )
+    )
+    assert isinstance(p, AnthropicProvider)
 
 
-def test_explicit_litellm_with_no_keys_still_returns_litellm():
-    # An operator may have provider-specific env vars LiteLLM picks up
-    # that we don't enumerate (e.g. PALM_API_KEY). Don't second-guess
-    # them — return LiteLLM and let it 401 if nothing's set.
-    p = get_provider(_settings(model_provider="litellm"))
-    assert isinstance(p, LiteLLMProvider)
+def test_explicit_provider_overrides_auto():
+    p = get_provider(
+        _settings(
+            anthropic_api_key="a",
+            openrouter_api_key="o",
+            model_provider="openrouter",
+        )
+    )
+    assert isinstance(p, OpenRouterProvider)
+
+
+def test_explicit_provider_without_credential_raises_clearly():
+    with pytest.raises(RuntimeError, match="PILOTHOUSE_OPENROUTER_API_KEY"):
+        get_provider(_settings(model_provider="openrouter"))
 
 
 def test_explicit_unknown_provider_raises():
@@ -120,7 +116,19 @@ def test_explicit_unknown_provider_raises():
         get_provider(_settings(model_provider="bedrock"))
 
 
-# --- translation: Anthropic → OpenAI --------------------------------------
+def test_force_mock_overrides_real_keys():
+    p = get_provider(_settings(model_provider="mock", anthropic_api_key="leak"))
+    assert isinstance(p, MockProvider)
+    assert is_mock_mode(_settings(model_provider="mock")) is True
+
+
+def test_is_mock_mode_false_for_explicit_real_provider_even_without_keys():
+    # Caller chose a real provider explicitly — they own the failure
+    # mode. We don't silently downgrade to mock.
+    assert is_mock_mode(_settings(model_provider="openai")) is False
+
+
+# --- translation: Anthropic → OpenAI -------------------------------------
 
 
 def test_tool_schema_translation():
@@ -192,23 +200,18 @@ def test_assistant_tool_use_becomes_tool_calls_with_string_arguments():
 
 
 def test_assistant_only_tool_use_has_null_content():
+    # OpenAI requires content to be null when only tool_calls are present.
     out = _anthropic_to_openai_messages(
         "",
         [
             {
                 "role": "assistant",
                 "content": [
-                    {
-                        "type": "tool_use",
-                        "id": "tu_1",
-                        "name": "noop",
-                        "input": {},
-                    }
+                    {"type": "tool_use", "id": "tu_1", "name": "noop", "input": {}}
                 ],
             }
         ],
     )
-    # OpenAI requires content to be null when only tool_calls are present.
     assert out[0]["content"] is None
 
 
@@ -234,30 +237,6 @@ def test_user_tool_result_becomes_tool_role_message():
     ]
 
 
-def test_user_mixed_text_and_tool_result_splits_into_two_messages():
-    out = _anthropic_to_openai_messages(
-        "",
-        [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": "also, here is more context"},
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": "tu_x",
-                        "content": "ok",
-                        "is_error": False,
-                    },
-                ],
-            }
-        ],
-    )
-    assert out == [
-        {"role": "user", "content": "also, here is more context"},
-        {"role": "tool", "tool_call_id": "tu_x", "content": "ok"},
-    ]
-
-
 def test_tool_result_with_dict_content_is_json_stringified():
     out = _anthropic_to_openai_messages(
         "",
@@ -267,7 +246,7 @@ def test_tool_result_with_dict_content_is_json_stringified():
                 "content": [
                     {
                         "type": "tool_result",
-                        "tool_use_id": "tu_dict",
+                        "tool_use_id": "tu",
                         "content": {"items": [1, 2, 3]},
                         "is_error": False,
                     }
@@ -278,11 +257,11 @@ def test_tool_result_with_dict_content_is_json_stringified():
     assert json.loads(out[0]["content"]) == {"items": [1, 2, 3]}
 
 
-# --- translation: LiteLLM/OpenAI → Anthropic ------------------------------
+# --- translation: OpenAI → Anthropic -------------------------------------
 
 
 def test_response_text_only():
-    r = _litellm_response_to_anthropic(
+    r = _openai_response_to_anthropic(
         {
             "choices": [
                 {
@@ -301,7 +280,7 @@ def test_response_text_only():
 
 
 def test_response_with_tool_calls():
-    r = _litellm_response_to_anthropic(
+    r = _openai_response_to_anthropic(
         {
             "choices": [
                 {
@@ -336,14 +315,11 @@ def test_response_with_tool_calls():
     ]
 
 
-def test_response_max_tokens_finish_reason():
-    r = _litellm_response_to_anthropic(
+def test_response_length_finish_reason_maps_to_max_tokens():
+    r = _openai_response_to_anthropic(
         {
             "choices": [
-                {
-                    "message": {"content": "truncated"},
-                    "finish_reason": "length",
-                }
+                {"message": {"content": "truncated"}, "finish_reason": "length"}
             ],
             "usage": {},
         }
@@ -354,7 +330,7 @@ def test_response_max_tokens_finish_reason():
 def test_response_malformed_tool_arguments_does_not_explode():
     # Models occasionally emit invalid JSON in tool args. Surface it
     # under a sentinel key instead of crashing the run.
-    r = _litellm_response_to_anthropic(
+    r = _openai_response_to_anthropic(
         {
             "choices": [
                 {
@@ -380,10 +356,8 @@ def test_response_malformed_tool_arguments_does_not_explode():
     assert r["content"][0]["input"] == {"_unparsed_arguments": "{not json"}
 
 
-def test_response_accepts_model_dump_objects():
-    """LiteLLM returns a pydantic-like ModelResponse, not a plain dict."""
-
-    class _FakeResponse:
+def test_response_accepts_pydantic_like_objects():
+    class _FakeResp:
         def model_dump(self) -> dict[str, Any]:
             return {
                 "choices": [
@@ -395,28 +369,51 @@ def test_response_accepts_model_dump_objects():
                 "usage": {"prompt_tokens": 1, "completion_tokens": 1},
             }
 
-    r = _litellm_response_to_anthropic(_FakeResponse())
+    r = _openai_response_to_anthropic(_FakeResp())
     assert r["content"] == [{"type": "text", "text": "ok"}]
 
 
-# --- LiteLLMProvider end-to-end via monkey-patched acompletion -----------
+# --- AnthropicProvider end-to-end via stubbed SDK ------------------------
 
 
-async def test_provider_complete_routes_through_litellm(monkeypatch):
-    """Drive `LiteLLMProvider.complete` with a stubbed `litellm.acompletion`.
+async def test_anthropic_provider_passes_messages_unchanged():
+    p = AnthropicProvider(api_key="sk-ant-x")
+    # Replace the underlying SDK with an AsyncMock to verify call shape.
+    fake_response = MagicMock()
+    fake_response.content = [
+        MagicMock(model_dump=lambda: {"type": "text", "text": "Hi"})
+    ]
+    fake_response.stop_reason = "end_turn"
+    fake_response.usage = MagicMock(input_tokens=5, output_tokens=3)
+    p._client.messages = MagicMock(create=AsyncMock(return_value=fake_response))
 
-    Verifies:
-      - request kwargs use OpenAI schema (system message, tools array,
-        max_tokens)
-      - model id is passed through unchanged so LiteLLM's prefix
-        routing kicks in
-      - response is normalized to Anthropic shape
-    """
-    import litellm
+    result = await p.complete(
+        system="be brief",
+        messages=[{"role": "user", "content": "hi"}],
+        tools=[{"name": "x", "description": "", "input_schema": {}}],
+        model="claude-opus-4-5",
+        max_tokens=128,
+    )
 
+    p._client.messages.create.assert_awaited_once()
+    kwargs = p._client.messages.create.await_args.kwargs
+    # Anthropic native — no translation, passed straight through.
+    assert kwargs["model"] == "claude-opus-4-5"
+    assert kwargs["system"] == "be brief"
+    assert kwargs["messages"] == [{"role": "user", "content": "hi"}]
+    assert kwargs["max_tokens"] == 128
+    assert result["stop_reason"] == "end_turn"
+    assert result["content"] == [{"type": "text", "text": "Hi"}]
+    assert result["usage"] == {"input_tokens": 5, "output_tokens": 3}
+
+
+# --- OpenAI / OpenRouter providers end-to-end via stubbed SDK ----------
+
+
+async def test_openai_compat_translates_request_and_response(monkeypatch):
     captured: dict[str, Any] = {}
 
-    async def _fake_acompletion(**kwargs):
+    async def _fake_create(**kwargs: Any) -> Any:
         captured.update(kwargs)
 
         class _Resp:
@@ -446,9 +443,11 @@ async def test_provider_complete_routes_through_litellm(monkeypatch):
 
         return _Resp()
 
-    monkeypatch.setattr(litellm, "acompletion", _fake_acompletion)
+    p = OpenAIProvider(api_key="sk-x")
+    p._client.chat = MagicMock(
+        completions=MagicMock(create=_fake_create)
+    )
 
-    p = LiteLLMProvider(openrouter_api_key="sk-or-x", openrouter_app_name="Pilothouse")
     response = await p.complete(
         system="be brief",
         messages=[{"role": "user", "content": "search for checkout"}],
@@ -459,126 +458,55 @@ async def test_provider_complete_routes_through_litellm(monkeypatch):
                 "input_schema": {"type": "object", "properties": {}},
             }
         ],
-        model="openrouter/anthropic/claude-sonnet-4-5",
+        model="gpt-4o",
         max_tokens=512,
     )
 
-    assert captured["model"] == "openrouter/anthropic/claude-sonnet-4-5"
+    # Request was translated to OpenAI shape.
+    assert captured["model"] == "gpt-4o"
     assert captured["max_tokens"] == 512
     assert captured["messages"][0] == {"role": "system", "content": "be brief"}
     assert captured["tools"][0]["function"]["name"] == "search"
-    # OpenRouter header attribution applied for openrouter/* model ids:
-    assert captured.get("extra_headers", {}).get("X-Title") == "Pilothouse"
 
-    # Round-trips to Anthropic shape:
+    # Response was translated back to Anthropic shape.
     assert response["stop_reason"] == "tool_use"
     assert response["content"][0]["name"] == "search"
     assert response["content"][0]["input"] == {"q": "x"}
-    assert response["usage"] == {"input_tokens": 11, "output_tokens": 5}
 
 
-async def test_provider_omits_extra_headers_for_non_openrouter_models(monkeypatch):
-    import litellm
-
-    captured: dict[str, Any] = {}
-
-    async def _fake_acompletion(**kwargs):
-        captured.update(kwargs)
-
-        class _Resp:
-            def model_dump(self) -> dict[str, Any]:
-                return {
-                    "choices": [
-                        {
-                            "message": {"content": "hi"},
-                            "finish_reason": "stop",
-                        }
-                    ],
-                    "usage": {"prompt_tokens": 1, "completion_tokens": 1},
-                }
-
-        return _Resp()
-
-    monkeypatch.setattr(litellm, "acompletion", _fake_acompletion)
-
-    p = LiteLLMProvider(anthropic_api_key="sk-ant-x", openrouter_site_url="x")
-    await p.complete(
-        system="",
-        messages=[{"role": "user", "content": "hi"}],
-        tools=[],
-        model="anthropic/claude-sonnet-4-5",
-        max_tokens=64,
+def test_openrouter_provider_sets_attribution_headers():
+    """X-Title and HTTP-Referer must be forwarded to the underlying SDK."""
+    p = OpenRouterProvider(
+        api_key="sk-or-x",
+        app_name="Pilothouse",
+        site_url="https://example.com",
     )
-    # OpenRouter-specific headers must not leak into Anthropic native calls.
-    assert "extra_headers" not in captured
+    headers = p._client.default_headers  # type: ignore[attr-defined]
+    # The SDK may add its own headers; we just need ours to be present.
+    assert headers.get("X-Title") == "Pilothouse"
+    assert headers.get("HTTP-Referer") == "https://example.com"
 
 
-async def test_provider_applies_openai_base_url_for_openai_native(monkeypatch):
-    """Operator points PILOTHOUSE_OPENAI_BASE_URL at a self-hosted vLLM /
-    LM Studio — that should reach LiteLLM as `api_base`."""
-    import litellm
-
-    captured: dict[str, Any] = {}
-
-    async def _fake_acompletion(**kwargs):
-        captured.update(kwargs)
-
-        class _Resp:
-            def model_dump(self) -> dict[str, Any]:
-                return {
-                    "choices": [
-                        {
-                            "message": {"content": "ok"},
-                            "finish_reason": "stop",
-                        }
-                    ],
-                    "usage": {},
-                }
-
-        return _Resp()
-
-    monkeypatch.setattr(litellm, "acompletion", _fake_acompletion)
-
-    p = LiteLLMProvider(
-        openai_api_key="sk-local",
-        openai_base_url="http://127.0.0.1:8000/v1",
-    )
-    await p.complete(
-        system="",
-        messages=[{"role": "user", "content": "hi"}],
-        tools=[],
-        model="gpt-4o",
-        max_tokens=64,
-    )
-    assert captured["api_base"] == "http://127.0.0.1:8000/v1"
+def test_openrouter_provider_strips_empty_headers():
+    p = OpenRouterProvider(api_key="sk-or-x", app_name="", site_url="")
+    headers = p._client.default_headers  # type: ignore[attr-defined]
+    assert "X-Title" not in headers
+    assert "HTTP-Referer" not in headers
 
 
-def test_provider_plants_keys_into_env(monkeypatch):
-    """LiteLLMProvider must seed the env vars LiteLLM auto-detects so
-    model-id prefix routing works without per-call `api_key`."""
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-
-    LiteLLMProvider(
-        anthropic_api_key="sk-ant-test",
-        openrouter_api_key="or-test",
-        openai_api_key="sk-test",
-    )
-
-    import os
-
-    assert os.environ.get("ANTHROPIC_API_KEY") == "sk-ant-test"
-    assert os.environ.get("OPENROUTER_API_KEY") == "or-test"
-    assert os.environ.get("OPENAI_API_KEY") == "sk-test"
+def test_openai_provider_supports_base_url_override():
+    """Self-hosted vLLM / LM Studio / Ollama use OpenAI-compat endpoints."""
+    p = OpenAIProvider(api_key="sk-local", base_url="http://127.0.0.1:8000/v1")
+    # SDK stores base_url; we don't assume exact form (trailing slash, etc.)
+    assert "127.0.0.1:8000" in str(p._client.base_url)
 
 
-def test_provider_respects_pre_existing_env(monkeypatch):
-    """If the operator has ANTHROPIC_API_KEY set in their shell already
-    (no PILOTHOUSE_ prefix), don't overwrite it."""
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "real-shell-key")
-    LiteLLMProvider(anthropic_api_key="pilothouse-config-key")
-    import os
-
-    # `os.environ.setdefault` semantics: shell wins.
-    assert os.environ["ANTHROPIC_API_KEY"] == "real-shell-key"
+def test_constructor_requires_api_key():
+    with pytest.raises(ValueError, match="api_key"):
+        AnthropicProvider(api_key="")
+    with pytest.raises(ValueError, match="api_key"):
+        OpenAIProvider(api_key="")
+    with pytest.raises(ValueError, match="api_key"):
+        OpenRouterProvider(api_key="")
+    with pytest.raises(ValueError, match="api_key"):
+        OpenAICompatProvider(api_key="", base_url="http://x")

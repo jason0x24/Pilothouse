@@ -156,6 +156,85 @@ def templates_list() -> None:
 
 
 @main.group()
+def providers() -> None:
+    """LLM provider configuration."""
+
+
+@providers.command("list")
+def providers_list() -> None:
+    """Show every registered provider and whether it's currently usable.
+
+    Active provider is highlighted. Operators choose models per-provider
+    using whatever id strings that provider accepts — Pilothouse does
+    not maintain a model whitelist. Examples:
+
+      anthropic   → claude-opus-4-5, claude-sonnet-4-5, …
+      openai      → gpt-4o, gpt-4o-mini, o3-mini, …
+      openrouter  → anthropic/claude-sonnet-4-5, openai/gpt-4o, …
+    """
+    from .agent.providers import (
+        PROVIDER_FACTORIES,
+        _PROVIDER_KEY_FIELDS,
+        _resolve_provider_name,
+    )
+    from .config import get_settings
+
+    s = get_settings()
+    active = _resolve_provider_name(s)
+
+    table = Table(title="LLM providers")
+    for col in ("provider", "credential env var", "configured?", "active?"):
+        table.add_column(col)
+    for name in sorted(PROVIDER_FACTORIES):
+        key_field = _PROVIDER_KEY_FIELDS.get(name)
+        env_name = f"PILOTHOUSE_{key_field.upper()}" if key_field else "(none — built-in)"
+        has_key = bool(getattr(s, key_field, "")) if key_field else True
+        configured = "[green]yes[/]" if has_key else "[dim]no[/]"
+        is_active = "[bold green]✓[/]" if name == active else ""
+        table.add_row(name, env_name, configured, is_active)
+    console.print(table)
+    console.print(
+        f"\nResolved provider for this process: [bold]{active}[/]   "
+        f"(planner={s.model_planner!r}, worker={s.model_worker!r})"
+    )
+
+
+@providers.command("doctor")
+def providers_doctor() -> None:
+    """Verify the configured provider actually has a credential.
+
+    Exits non-zero if not — handy as a pre-deploy CI gate.
+    """
+    from .agent.providers import (
+        PROVIDER_FACTORIES,
+        _PROVIDER_KEY_FIELDS,
+        _resolve_provider_name,
+    )
+    from .config import get_settings
+
+    s = get_settings()
+    name = _resolve_provider_name(s)
+    if name not in PROVIDER_FACTORIES:
+        raise click.ClickException(f"unknown provider {name!r}")
+
+    if name == "mock":
+        console.print(
+            "[yellow]using mock provider[/] — no real LLM is being called. "
+            "Set PILOTHOUSE_ANTHROPIC_API_KEY / OPENAI_API_KEY / "
+            "OPENROUTER_API_KEY to enable real calls."
+        )
+        return
+
+    key_field = _PROVIDER_KEY_FIELDS.get(name)
+    if key_field and not getattr(s, key_field, ""):
+        env_name = f"PILOTHOUSE_{key_field.upper()}"
+        raise click.ClickException(
+            f"provider {name!r} selected but {env_name} is empty."
+        )
+    console.print(f"[green]✓[/] provider={name!r}  planner={s.model_planner!r}  worker={s.model_worker!r}")
+
+
+@main.group()
 def connectors() -> None:
     """Built-in connectors."""
 
