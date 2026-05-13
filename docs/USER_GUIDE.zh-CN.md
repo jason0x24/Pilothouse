@@ -378,11 +378,74 @@ Pilothouse 主机 shell 权限的运维能动。
 
 | 变量 | 默认值 | 用途 |
 |---|---|---|
-| `PILOTHOUSE_ANTHROPIC_API_KEY` | `""` | 设了用真实 Claude,空用 mock 模式 |
-| `PILOTHOUSE_MODEL_PLANNER` | `claude-opus-4-5` | planner 模型 |
-| `PILOTHOUSE_MODEL_WORKER` | `claude-haiku-4-5` | 高频小任务模型 |
 | `PILOTHOUSE_DATABASE_URL` | `./var` 下 sqlite | SQLAlchemy URL |
 | `PILOTHOUSE_HOST` / `PILOTHOUSE_PORT` | `127.0.0.1` / `8088` | HTTP 监听 |
+
+### LLM provider —— 一个抽象层覆盖 100+ 模型
+
+真实 LLM 调用统一走 [LiteLLM](https://docs.litellm.ai/),它内部对接了几乎所有主流厂商的 API。**路由完全由 model id 前缀决定**,改 `PILOTHOUSE_MODEL_PLANNER` 就换模型:
+
+| 前缀 | 厂商 | 鉴权 env |
+|---|---|---|
+| `anthropic/…` 或 `claude-…` | Anthropic 原生 | `PILOTHOUSE_ANTHROPIC_API_KEY` |
+| `openai/…` 或 `gpt-…`、`o1-…`、`o3-…` | OpenAI 原生 | `PILOTHOUSE_OPENAI_API_KEY` |
+| `openrouter/<厂商>/<模型>` | OpenRouter | `PILOTHOUSE_OPENROUTER_API_KEY` |
+| `bedrock/anthropic.claude-…` | AWS Bedrock | `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` + `AWS_REGION_NAME` |
+| `vertex_ai/claude-…` | Google Vertex AI | `GOOGLE_APPLICATION_CREDENTIALS` |
+| `gemini/gemini-…` | Google Gemini | `GEMINI_API_KEY` |
+| `azure/<deployment>` | Azure OpenAI | `AZURE_API_KEY` + `AZURE_API_BASE` |
+| `groq/…` | Groq | `GROQ_API_KEY` |
+| `mistral/…` | Mistral La Plateforme | `MISTRAL_API_KEY` |
+| `together_ai/…` | Together AI | `TOGETHER_API_KEY` |
+| `cohere/…` | Cohere | `COHERE_API_KEY` |
+| `ollama/…` | 本地 Ollama | (无需 key) |
+
+完整列表见 [LiteLLM 文档](https://docs.litellm.ai/docs/providers)。
+
+| 变量 | 默认值 | 用途 |
+|---|---|---|
+| `PILOTHOUSE_MODEL_PROVIDER` | `""`(自动) | `mock` 强制 mock;`litellm` 强制走 LiteLLM;空 = 自动 |
+| `PILOTHOUSE_MODEL_PLANNER` | `claude-opus-4-5` | planner 模型 id(必须是 LiteLLM 认识的) |
+| `PILOTHOUSE_MODEL_WORKER` | `claude-haiku-4-5` | 高频小任务模型 |
+| `PILOTHOUSE_ANTHROPIC_API_KEY` | `""` | Anthropic 原生 key |
+| `PILOTHOUSE_OPENROUTER_API_KEY` | `""` | OpenRouter key |
+| `PILOTHOUSE_OPENAI_API_KEY` | `""` | OpenAI 原生 或 任意 OpenAI-compat 端点(配 `PILOTHOUSE_OPENAI_BASE_URL`) |
+| `PILOTHOUSE_OPENAI_BASE_URL` | `""` | 指向 Together / Groq / Mistral / vLLM / LM Studio |
+| `PILOTHOUSE_OPENROUTER_APP_NAME` / `_SITE_URL` | `""` / `""` | OpenRouter 用量归因 header |
+
+示例:
+
+```bash
+# Anthropic 原生
+PILOTHOUSE_ANTHROPIC_API_KEY=sk-ant-...
+PILOTHOUSE_MODEL_PLANNER=claude-opus-4-5
+
+# OpenRouter —— Claude
+PILOTHOUSE_OPENROUTER_API_KEY=sk-or-v1-...
+PILOTHOUSE_MODEL_PLANNER=openrouter/anthropic/claude-sonnet-4-5
+
+# OpenRouter —— 切到 GPT-4o,改一行就行
+PILOTHOUSE_OPENROUTER_API_KEY=sk-or-v1-...
+PILOTHOUSE_MODEL_PLANNER=openrouter/openai/gpt-4o
+
+# OpenAI 原生
+PILOTHOUSE_OPENAI_API_KEY=sk-...
+PILOTHOUSE_MODEL_PLANNER=gpt-4o
+
+# AWS Bedrock —— 用标准 AWS 凭证
+AWS_ACCESS_KEY_ID=...
+AWS_SECRET_ACCESS_KEY=...
+AWS_REGION_NAME=us-east-1
+PILOTHOUSE_MODEL_PLANNER=bedrock/anthropic.claude-3-5-sonnet-20241022-v2:0
+
+# 本地 Llama via vLLM / LM Studio(OpenAI-compat)
+PILOTHOUSE_OPENAI_API_KEY=sk-local
+PILOTHOUSE_OPENAI_BASE_URL=http://127.0.0.1:8000/v1
+PILOTHOUSE_MODEL_PLANNER=openai/meta-llama/Llama-3.1-70B-Instruct
+
+# 本地 Ollama(无 key)
+PILOTHOUSE_MODEL_PLANNER=ollama/llama3
+```
 
 ### 鉴权 + 安全
 

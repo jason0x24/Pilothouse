@@ -5,6 +5,28 @@ the platform is single-development-line; see `git log` for finer grain.
 
 ## Unreleased
 
+### Multi-provider LLM support via LiteLLM
+
+- **100+ models via LiteLLM** — a new `pilothouse/agent/providers/`
+  package routes every real LLM call through
+  [LiteLLM](https://docs.litellm.ai/). Out of the box: Anthropic,
+  OpenAI, OpenRouter, AWS Bedrock, Google Vertex AI, Gemini, Azure
+  OpenAI, Groq, Mistral, Together, Cohere, Ollama, vLLM, LM Studio,
+  and 90+ more — selected purely by the model-id prefix in
+  `PILOTHOUSE_MODEL_PLANNER`.
+- **Two providers, by design** — `MockProvider` (deterministic replay
+  for keyless local demos + the test suite) and `LiteLLMProvider`
+  (everything else). Selection is auto: any LLM API key configured →
+  LiteLLM; nothing → mock.
+- **Anthropic shape preserved internally** — the runtime, templates,
+  connectors, persisted state, and the entire test suite still speak
+  Anthropic-style content blocks. Translation to/from OpenAI shape
+  happens inside `litellm_provider.py` and is unit-tested with 25
+  cases covering tool schemas, assistant `tool_use` blocks, user
+  `tool_result` blocks, finish_reason mapping, malformed-argument
+  fallback, and end-to-end via a monkey-patched `litellm.acompletion`.
+- **Total test count: 175** (was 150; +25 new).
+
 ### Execution backends
 
 - **Temporal executor (optional)** — set `PILOTHOUSE_TEMPORAL_ADDRESS`

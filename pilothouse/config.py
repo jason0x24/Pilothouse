@@ -28,8 +28,44 @@ class Settings(BaseSettings):
     database_url: str = "sqlite+aiosqlite:///./var/pilothouse.db"
     log_level: str = "INFO"
 
-    # LLM
+    # LLM provider selection.
+    #
+    # Real LLM calls go through LiteLLM (https://docs.litellm.ai/), which
+    # speaks 100+ APIs (Anthropic, OpenAI, OpenRouter, Bedrock, Vertex,
+    # Gemini, Groq, Mistral, Together, Azure, Cohere, Ollama, …). Routing
+    # is driven by `model_planner` / `model_worker` prefixes; see
+    # docs/USER_GUIDE.md §9 for the full table.
+    #
+    # `model_provider`:
+    #   ""        — auto: LiteLLM if any LLM key is set, else mock
+    #   "litellm" — force LiteLLM (operator may use shell env vars LiteLLM
+    #               picks up that we don't enumerate)
+    #   "mock"    — force deterministic replay (no network)
+    model_provider: str = ""
+
+    # API keys for the providers LiteLLM auto-detects via env. Set any
+    # of these and Pilothouse plants them into LiteLLM's expected env
+    # names (ANTHROPIC_API_KEY, OPENROUTER_API_KEY, OPENAI_API_KEY) so
+    # model-id prefix routing works. Cloud providers with multi-var auth
+    # (Bedrock = AWS_*, Vertex = GOOGLE_APPLICATION_CREDENTIALS, Azure)
+    # are picked up directly from the shell.
     anthropic_api_key: str = ""
+    openrouter_api_key: str = ""
+    openai_api_key: str = ""
+
+    # Self-hosted OpenAI-compat endpoints (vLLM, LM Studio, Together,
+    # Groq, Mistral, …). When set, passed to LiteLLM as `api_base` for
+    # openai/* model ids.
+    openai_base_url: str = ""
+
+    # Optional OpenRouter attribution headers (X-Title / HTTP-Referer)
+    # surfaced to the openrouter/* request. Used for rate-limit tiers.
+    openrouter_app_name: str = ""
+    openrouter_site_url: str = ""
+
+    # Model ids — must match LiteLLM's catalogue. Defaults are Anthropic
+    # native; for OpenRouter use e.g. "openrouter/anthropic/claude-sonnet-4-5"
+    # or "openrouter/openai/gpt-4o".
     model_planner: str = "claude-opus-4-5"
     model_worker: str = "claude-haiku-4-5"
     max_tool_iterations: int = 12

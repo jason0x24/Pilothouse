@@ -26,7 +26,6 @@ invocation is still routed through dry-run when the agent is in dry-run.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
@@ -40,6 +39,7 @@ from ..config import get_settings
 from ..connectors.base import Tool, ToolContext, ToolResult, as_text, registry
 from ..events import RunEvent, get_bus
 from ..models import Approval, ApprovalStatus, Event, EventKind, Run, RunStatus
+from .providers import get_provider
 
 log = logging.getLogger(__name__)
 
@@ -226,7 +226,7 @@ class AgentRunner:
 
     async def _drive(self, *, run: Run, state: dict, tools: list[Tool]) -> RunOutcome:
         settings = get_settings()
-        client = _build_client()
+        provider = get_provider(settings)
         tools_schema = [t.to_anthropic() for t in tools]
         tools_by_name = {t.name: t for t in tools}
 
@@ -263,8 +263,7 @@ class AgentRunner:
                     tool_calls=tool_calls,
                 )
             try:
-                response = await _model_call(
-                    client,
+                response = await provider.complete(
                     system=state["system"],
                     messages=messages,
                     tools=tools_schema,
@@ -483,110 +482,6 @@ class AgentRunner:
             params=dict(state.get("params") or {}),
             emit=_emit_for_run,
         )
-
-
-# --- LLM client abstraction ----------------------------------------------
-
-
-def _build_client():
-    s = get_settings()
-    if not s.anthropic_api_key:
-        return None
-    try:
-        from anthropic import AsyncAnthropic
-
-        return AsyncAnthropic(api_key=s.anthropic_api_key)
-    except ImportError:
-        return None
-
-
-async def _model_call(
-    client,
-    *,
-    system: str,
-    messages: list[dict],
-    tools: list[dict],
-    max_tokens: int,
-    model: str,
-) -> dict[str, Any]:
-    if client is None:
-        return await _mock_model_call(system=system, messages=messages, tools=tools)
-
-    response = await client.messages.create(
-        model=model,
-        system=system,
-        messages=messages,
-        tools=tools,
-        max_tokens=max_tokens,
-    )
-    content: list[dict] = []
-    for block in response.content:
-        b = block.model_dump() if hasattr(block, "model_dump") else dict(block)
-        content.append(b)
-    return {
-        "stop_reason": response.stop_reason,
-        "content": content,
-        "usage": {
-            "input_tokens": response.usage.input_tokens,
-            "output_tokens": response.usage.output_tokens,
-        },
-    }
-
-
-async def _mock_model_call(
-    *, system: str, messages: list[dict], tools: list[dict]
-) -> dict[str, Any]:
-    """Deterministic replay used when no Anthropic key is set.
-
-    Walks the `mock_plan` carried in the first user message. Each step is
-    either {"tool": …, "input": …} → emits a tool_use, or {"final": …} →
-    emits a text turn that terminates the loop.
-    """
-    plan: list[dict] = []
-    for m in messages:
-        content = m.get("content")
-        if isinstance(content, str):
-            try:
-                payload = json.loads(content)
-            except Exception:
-                payload = None
-            if isinstance(payload, dict) and "mock_plan" in payload:
-                plan = list(payload["mock_plan"])
-                break
-
-    already = 0
-    for m in messages:
-        if m["role"] == "assistant":
-            for b in m.get("content", []) or []:
-                if isinstance(b, dict) and b.get("type") == "tool_use":
-                    already += 1
-
-    if already < len(plan) and "tool" in plan[already]:
-        step = plan[already]
-        await asyncio.sleep(0)
-        return {
-            "stop_reason": "tool_use",
-            "content": [
-                {
-                    "type": "tool_use",
-                    "id": f"mock_{already}",
-                    "name": step["tool"],
-                    "input": step.get("input", {}),
-                }
-            ],
-            "usage": {"input_tokens": 50, "output_tokens": 30},
-        }
-
-    final = "[mock] Plan complete."
-    if plan and "final" in plan[-1]:
-        final = plan[-1]["final"]
-    elif plan and already >= len(plan):
-        final = "[mock] All planned tools executed."
-    return {
-        "stop_reason": "end_turn",
-        "content": [{"type": "text", "text": final}],
-        "usage": {"input_tokens": 20, "output_tokens": 60},
-    }
 
 
 # --- helpers --------------------------------------------------------------

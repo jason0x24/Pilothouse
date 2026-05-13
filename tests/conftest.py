@@ -12,7 +12,14 @@ import pytest
 _TMPDIR = tempfile.mkdtemp(prefix="pilothouse-tests-")
 os.environ["PILOTHOUSE_DATA_DIR"] = _TMPDIR
 os.environ["PILOTHOUSE_DATABASE_URL"] = f"sqlite+aiosqlite:///{_TMPDIR}/test.db"
-os.environ.pop("PILOTHOUSE_ANTHROPIC_API_KEY", None)  # force mock mode
+# Force mock mode regardless of operator-shell env vars.
+for _key in (
+    "PILOTHOUSE_ANTHROPIC_API_KEY",
+    "PILOTHOUSE_OPENROUTER_API_KEY",
+    "PILOTHOUSE_OPENAI_API_KEY",
+    "PILOTHOUSE_MODEL_PROVIDER",
+):
+    os.environ.pop(_key, None)
 
 from pilothouse.connectors import register_builtin_connectors  # noqa: E402
 from pilothouse.db import init_db  # noqa: E402

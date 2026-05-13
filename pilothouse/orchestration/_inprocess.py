@@ -81,7 +81,9 @@ class InProcessExecutor:
             # In mock mode the runtime parses a `mock_plan` array from
             # the user message; we wrap the real instruction alongside.
             user_message = plan.user_message
-            if not settings.anthropic_api_key:
+            from ..agent.providers import is_mock_mode
+
+            if is_mock_mode(settings):
                 mock_plan = template.mock_plan(
                     trigger_payload=trigger_payload, params=params
                 )
