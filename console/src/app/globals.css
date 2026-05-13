@@ -1,0 +1,40 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  height: 100%;
+  background: theme("colors.ink.900");
+  color: theme("colors.ink.100");
+}
+
+@layer components {
+  .card {
+    @apply rounded-lg border border-ink-700 bg-ink-800 p-4 shadow-sm;
+  }
+  .pill {
+    @apply inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium;
+  }
+  .pill-ok { @apply bg-emerald-900/40 text-emerald-200 border border-emerald-800; }
+  .pill-warn { @apply bg-amber-900/40 text-amber-200 border border-amber-800; }
+  .pill-err { @apply bg-rose-900/40 text-rose-200 border border-rose-800; }
+  .pill-info { @apply bg-sky-900/40 text-sky-200 border border-sky-800; }
+  .pill-neutral { @apply bg-ink-700 text-ink-200 border border-ink-600; }
+  .btn {
+    @apply inline-flex items-center justify-center rounded-md px-3 py-1.5 text-sm font-medium
+      transition focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-ink-900;
+  }
+  .btn-primary { @apply btn bg-emerald-700 hover:bg-emerald-600 text-white; }
+  .btn-danger { @apply btn bg-rose-700 hover:bg-rose-600 text-white; }
+  .btn-ghost { @apply btn bg-ink-700 hover:bg-ink-600 text-ink-100; }
+  .kv {
+    @apply grid grid-cols-[160px_1fr] gap-y-1 text-sm;
+  }
+  .kv > dt { @apply text-ink-300; }
+  .kv > dd { @apply text-ink-100 font-mono; }
+}
