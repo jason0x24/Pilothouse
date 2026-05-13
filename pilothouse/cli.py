@@ -487,6 +487,69 @@ def runs() -> None:
     """Inspect runs."""
 
 
+@runs.command("list")
+@click.option("--limit", default=20, type=int, help="max rows to return (cap 500)")
+@click.option("--offset", default=0, type=int, help="skip the first N rows")
+@click.option("--status", default=None, help="exact RunStatus (succeeded/failed/running/awaiting_approval/cancelled)")
+@click.option("--agent", default=None, help="exact agent name")
+@click.option("--trigger", default=None, help="substring match against Run.trigger (e.g. 'webhook')")
+@click.option("-q", "summary_q", default=None, help="substring match against Run.summary")
+def runs_list(
+    limit: int,
+    offset: int,
+    status: str | None,
+    agent: str | None,
+    trigger: str | None,
+    summary_q: str | None,
+) -> None:
+    """List recent runs across all agents. Mirrors the /runs HTTP endpoint."""
+
+    async def _go() -> None:
+        await init_db()
+        async with session() as s:
+            stmt = (
+                select(Run, Agent.name)
+                .join(Agent, Agent.id == Run.agent_id)
+                .order_by(Run.started_at.desc())
+                .limit(max(1, min(500, limit)))
+                .offset(max(0, offset))
+            )
+            if status:
+                try:
+                    stmt = stmt.where(Run.status == RunStatus(status))
+                except ValueError as exc:
+                    raise click.ClickException(f"unknown status: {status}") from exc
+            if trigger:
+                stmt = stmt.where(Run.trigger.like(f"%{trigger}%"))
+            if summary_q:
+                stmt = stmt.where(Run.summary.like(f"%{summary_q}%"))
+            if agent:
+                stmt = stmt.where(Agent.name == agent)
+            rows = (await s.execute(stmt)).all()
+
+            table = Table(title="Runs")
+            for col in ("id", "agent", "trigger", "status", "tok in/out", "started", "summary"):
+                table.add_column(col)
+            for r, agent_name in rows:
+                summary = (r.summary or "").splitlines()[0] if r.summary else ""
+                if len(summary) > 60:
+                    summary = summary[:57] + "…"
+                table.add_row(
+                    r.id[:8],
+                    agent_name,
+                    r.trigger,
+                    r.status.value if hasattr(r.status, "value") else str(r.status),
+                    f"{r.tokens_input}/{r.tokens_output}",
+                    r.started_at.strftime("%Y-%m-%d %H:%M:%S"),
+                    summary,
+                )
+            console.print(table)
+            if not rows:
+                console.print("[dim]no runs match these filters[/]")
+
+    _run(_go())
+
+
 @runs.command("show")
 @click.argument("run_id")
 def runs_show(run_id: str) -> None:
